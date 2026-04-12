@@ -1,0 +1,250 @@
+/**
+ * Watchlist.jsx — now uses live prices via useLivePrices hook.
+ */
+
+import { useState, useEffect, useRef } from 'react'
+import { Star, StarOff, PlusCircle, RefreshCw, Search, Loader2 } from 'lucide-react'
+import { useApp, ACTIONS } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { STOCKS } from '../data/mockData'
+import { useLivePrices } from '../hooks/useLivePrices'
+import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
+import { searchTickers } from '../services/polygonApi'
+import clsx from 'clsx'
+
+const DEBOUNCE_MS = 300
+
+export default function Watchlist() {
+  const { state, dispatch } = useApp()
+  const { canTrade } = useAuth()
+  const [showPicker,  setShowPicker]  = useState(false)
+  const [query,       setQuery]       = useState('')
+  const [results,     setResults]     = useState([])
+  const [searching,   setSearching]   = useState(false)
+  const [isFocused,   setIsFocused]   = useState(false)
+  const debounceRef = useRef(null)
+  const inputRef    = useRef(null)
+
+  // Fetch live prices for watchlisted symbols
+  const { prices, loading, error, refetch } = useLivePrices(state.watchlist)
+
+  // Live search via Polygon whenever query changes
+  useEffect(() => {
+    clearTimeout(debounceRef.current)
+    if (query.trim().length === 0) { setResults([]); setSearching(false); return }
+    setSearching(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const hits = await searchTickers(query, 8)
+        // Filter out symbols already on the watchlist
+        setResults(hits.filter(h => !state.watchlist.includes(h.symbol)))
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, DEBOUNCE_MS)
+    return () => clearTimeout(debounceRef.current)
+  }, [query, state.watchlist])
+
+  const showDropdown = isFocused && (searching || results.length > 0)
+
+  const handleAdd = (symbol) => {
+    dispatch({ type: ACTIONS.ADD_TO_WATCHLIST, payload: symbol })
+    setQuery('')
+    setResults([])
+    setIsFocused(false)
+    inputRef.current?.blur()
+  }
+
+  const handleClosePicker = () => {
+    setShowPicker(false)
+    setQuery('')
+    setResults([])
+  }
+
+  // Enrich watchlist with live prices + static metadata
+  const watchlistStocks = state.watchlist
+    .map(symbol => {
+      const live = prices.get(symbol)
+      const meta = STOCKS.find(s => s.symbol === symbol) ?? { symbol, name: symbol }
+      return live ? { ...meta, ...live } : null
+    })
+    .filter(Boolean)
+
+  if (loading) return <LoadingSpinner message="Fetching live watchlist prices…" />
+  if (error)   return <ErrorMessage error={error} />
+
+  return (
+    <div className="p-6 space-y-4">
+
+      {/* ── Header row ───────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Star size={16} className="text-yellow-400 fill-yellow-400" />
+            <p className="text-white/60 text-sm">{watchlistStocks.length} stocks</p>
+          </div>
+          <button onClick={refetch} className="text-white/20 hover:text-white/60 transition-colors flex items-center gap-1 text-xs" title="Refresh">
+            <RefreshCw size={11} /> Refresh
+          </button>
+        </div>
+
+        {canTrade && (
+          <button
+            onClick={() => { setShowPicker(v => !v); setTimeout(() => inputRef.current?.focus(), 50) }}
+            className="flex items-center gap-1.5 text-accent-blue hover:text-accent-blue/80 text-xs font-medium transition-colors"
+          >
+            <PlusCircle size={14} /> Add Stock
+          </button>
+        )}
+      </div>
+
+      {/* ── Add stock search ─────────────────────────── */}
+      {showPicker && (
+        <div className="bg-surface-card border border-white/10 rounded-xl p-4">
+          <div className="relative">
+            {/* Search input */}
+            <div className="flex items-center gap-2 bg-surface-hover border border-white/10 rounded-lg px-3 py-2">
+              {searching
+                ? <Loader2 size={14} className="text-white/40 shrink-0 animate-spin" />
+                : <Search  size={14} className="text-white/40 shrink-0" />
+              }
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder="Search any stock or ETF to add…"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                className="bg-transparent text-sm text-white placeholder-white/30 outline-none w-full"
+              />
+              <button
+                onClick={handleClosePicker}
+                className="text-white/30 hover:text-white text-sm ml-1 transition-colors"
+              >✕</button>
+            </div>
+
+            {/* Results dropdown */}
+            {showDropdown && (
+              <ul
+                onMouseDown={e => e.preventDefault()}
+                className="absolute top-full mt-1 w-full bg-surface-card border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden"
+              >
+                {searching && results.length === 0 ? (
+                  <li className="px-4 py-3 text-white/30 text-sm">Searching…</li>
+                ) : results.length === 0 ? (
+                  <li className="px-4 py-3 text-white/30 text-sm">No results found.</li>
+                ) : (
+                  results.map(stock => (
+                    <li key={stock.symbol}>
+                      <button
+                        onClick={() => handleAdd(stock.symbol)}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover transition-colors text-left"
+                      >
+                        <span className="text-accent-blue font-mono text-sm font-semibold w-16 shrink-0">
+                          {stock.symbol}
+                        </span>
+                        <span className="text-white/60 text-sm truncate">{stock.name}</span>
+                        {stock.type && stock.type !== 'CS' && (
+                          <span className="ml-auto text-white/20 text-xs shrink-0">{stock.type}</span>
+                        )}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Watchlist table ──────────────────────────── */}
+      {state.watchlist.length === 0 ? (
+        <div className="bg-surface-card border border-white/5 rounded-xl px-5 py-16 text-center">
+          <StarOff size={32} className="text-white/10 mx-auto mb-3" />
+          <p className="text-white/30 text-sm">Your watchlist is empty.</p>
+          <p className="text-white/20 text-xs mt-1">Click "Add Stock" to start tracking stocks.</p>
+        </div>
+      ) : (
+        <div className="bg-surface-card border border-white/5 rounded-xl overflow-hidden">
+          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-5 py-3 border-b border-white/5 text-white/30 text-xs font-medium">
+            <span>Stock</span>
+            <span className="text-right w-20">Price (Live)</span>
+            <span className="text-right w-24">Day Change</span>
+            <span className="text-right w-36">52-Week Range</span>
+            <span className="w-8"></span>
+          </div>
+
+          {watchlistStocks.map((s, idx) => {
+            // Compute 52w high/low from what we have (fallback to price ± 10% if no history)
+            const high52w = s.high52w ?? s.price * 1.1
+            const low52w  = s.low52w  ?? s.price * 0.9
+
+            return (
+              <div
+                key={s.symbol}
+                className={clsx(
+                  'grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-5 py-3 items-center',
+                  'hover:bg-surface-hover transition-colors',
+                  idx > 0 && 'border-t border-white/5'
+                )}
+              >
+                <button onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: s.symbol })} className="text-left">
+                  <p className="text-white font-mono font-semibold">{s.symbol}</p>
+                  <p className="text-white/40 text-xs">{s.name}</p>
+                </button>
+
+                <div className="text-right w-20">
+                  <p className="text-white font-medium">${s.price.toFixed(2)}</p>
+                </div>
+
+                <div className="text-right w-24">
+                  <p className={clsx('font-medium text-sm', s.change >= 0 ? 'text-gain' : 'text-loss')}>
+                    {s.change >= 0 ? '+' : ''}{s.change.toFixed(2)}
+                  </p>
+                  <p className={clsx('text-xs', s.changePct >= 0 ? 'text-gain' : 'text-loss')}>
+                    {s.changePct >= 0 ? '+' : ''}{s.changePct.toFixed(2)}%
+                  </p>
+                </div>
+
+                <div className="w-36">
+                  <div className="flex justify-between text-white/25 text-xs mb-1">
+                    <span>${low52w.toFixed(0)}</span>
+                    <span>${high52w.toFixed(0)}</span>
+                  </div>
+                  <div className="relative h-1.5 bg-surface-hover rounded-full">
+                    <div
+                      className="absolute top-0 w-2 h-2 -mt-0.5 rounded-full bg-accent-blue"
+                      style={{
+                        left: `${Math.min(100, Math.max(0, ((s.price - low52w) / (high52w - low52w)) * 100))}%`,
+                        transform: 'translateX(-50%)',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="w-8 flex justify-center">
+                  {canTrade && (
+                    <button
+                      onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_WATCHLIST, payload: s.symbol })}
+                      title="Remove from watchlist"
+                      className="text-yellow-400/30 hover:text-yellow-400 transition-colors"
+                    >
+                      <Star size={15} className="fill-current" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <p className="text-white/20 text-xs text-center">
+        💡 Click any stock name to see its full price chart
+      </p>
+    </div>
+  )
+}

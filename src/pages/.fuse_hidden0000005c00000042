@@ -1,0 +1,320 @@
+/**
+ * StockDetail.jsx
+ * Single stock view with LIVE data from Polygon.io:
+ *  - Real current price + daily change (snapshot)
+ *  - Real price history for the chart (aggregates)
+ *  - Ticker details (company name, sector, description)
+ *
+ * When a user switches time ranges (1M / 3M / 6M / All), we re-fetch
+ * from Polygon with the appropriate date range.
+ */
+
+import { useState, useEffect } from 'react'
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, ReferenceLine, CartesianGrid,
+} from 'recharts'
+import { Star, ArrowLeft, PlusCircle, ExternalLink } from 'lucide-react'
+import { useApp, ACTIONS } from '../context/AppContext'
+import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
+import { STOCKS } from '../data/mockData'
+import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
+import clsx from 'clsx'
+
+const RANGES = [
+  { label: '1M', days: 30  },
+  { label: '3M', days: 90  },
+  { label: '6M', days: 180 },
+  { label: '1Y', days: 365 },
+]
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="bg-surface-card border border-slate-200 rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="text-slate-500 mb-1">{label}</p>
+      <p className="text-slate-900 font-semibold">${d.close.toFixed(2)}</p>
+      <p className="text-slate-400">Vol: {(d.volume / 1_000_000).toFixed(1)}M</p>
+    </div>
+  )
+}
+
+export default function StockDetail() {
+  const { state, dispatch } = useApp()
+  const symbol = state.selectedStock
+
+  const [range,       setRange]       = useState('3M')
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [shares,      setShares]      = useState('')
+
+  // Separate loading/error states for snapshot vs chart data
+  const [snapshot,     setSnapshot]     = useState(null)
+  const [details,      setDetails]      = useState(null)
+  const [chartData,    setChartData]    = useState([])
+  const [loadingSnap,  setLoadingSnap]  = useState(true)
+  const [loadingChart, setLoadingChart] = useState(true)
+  const [errorSnap,    setErrorSnap]    = useState(null)
+  const [errorChart,   setErrorChart]   = useState(null)
+
+  // ── Fetch snapshot + ticker details on mount (or symbol change) ──
+  useEffect(() => {
+    if (!symbol) return
+    setLoadingSnap(true)
+    setErrorSnap(null)
+
+    // Run both requests in parallel with Promise.all
+    Promise.all([
+      getSnapshots([symbol]),
+      getTickerDetails(symbol),
+    ])
+      .then(([snaps, det]) => {
+        setSnapshot(snaps[0] ?? null)
+        setDetails(det)
+      })
+      .catch(err => setErrorSnap(err))
+      .finally(() => setLoadingSnap(false))
+  }, [symbol])
+
+  // ── Fetch chart data when symbol or range changes ────────────
+  useEffect(() => {
+    if (!symbol) return
+    setLoadingChart(true)
+    setErrorChart(null)
+
+    const days = RANGES.find(r => r.label === range)?.days ?? 90
+    const from = daysAgo(days)
+    const to   = today()
+
+    getAggregates(symbol, from, to)
+      .then(bars => setChartData(bars))
+      .catch(err => setErrorChart(err))
+      .finally(() => setLoadingChart(false))
+  }, [symbol, range])
+
+  // ── Derived values ─────────────────────────────────────────
+  // Fall back to static metadata if details haven't loaded yet
+  const meta      = STOCKS.find(s => s.symbol === symbol) ?? {}
+  const name      = details?.name    ?? meta.name    ?? symbol
+  const sector    = details?.sector  ?? meta.sector  ?? '—'
+  const price     = snapshot?.price     ?? 0
+  const change    = snapshot?.change    ?? 0
+  const changePct = snapshot?.changePct ?? 0
+  const isWatched = state.watchlist.includes(symbol)
+
+  const firstPrice = chartData[0]?.close ?? 0
+  const lastPrice  = chartData[chartData.length - 1]?.close ?? 0
+  const chartColor = lastPrice >= firstPrice ? '#22c55e' : '#ef4444'
+
+  const high52w = chartData.length ? Math.max(...chartData.map(d => d.high)) : 0
+  const low52w  = chartData.length ? Math.min(...chartData.map(d => d.low))  : 0
+
+  // ── Handlers ───────────────────────────────────────────────
+  const handleToggleWatch = () => {
+    dispatch({
+      type: isWatched ? ACTIONS.REMOVE_FROM_WATCHLIST : ACTIONS.ADD_TO_WATCHLIST,
+      payload: symbol,
+    })
+  }
+
+  const handleAddToPortfolio = (e) => {
+    e.preventDefault()
+    const sh = parseFloat(shares)
+    if (isNaN(sh) || sh <= 0) return
+    dispatch({
+      type: ACTIONS.ADD_TO_PORTFOLIO,
+      payload: { symbol, shares: sh, avgCost: price },
+    })
+    setShares('')
+    setShowAddForm(false)
+  }
+
+  if (errorSnap) return <ErrorMessage error={errorSnap} />
+
+  return (
+    <div className="p-6 space-y-5">
+
+      {/* ── Back button ──────────────────────────────── */}
+      <button
+        onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'dashboard' })}
+        className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 text-sm transition-colors"
+      >
+        <ArrowLeft size={15} /> Back to Market
+      </button>
+
+      {/* ── Stock header ─────────────────────────────── */}
+      {loadingSnap ? (
+        <LoadingSpinner message="Loading stock info…" />
+      ) : (
+        <>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-baseline gap-3">
+                <h2 className="text-slate-900 font-bold text-3xl font-mono">{symbol}</h2>
+                <span className="text-slate-500 text-base">{name}</span>
+                {details?.homepageUrl && (
+                  <a
+                    href={details.homepageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-400 hover:text-accent-blue transition-colors"
+                  >
+                    <ExternalLink size={13} />
+                  </a>
+                )}
+              </div>
+              <div className="flex items-baseline gap-3 mt-2">
+                <span className="text-slate-900 font-semibold text-4xl">${price.toFixed(2)}</span>
+                <span className={clsx('text-lg font-medium', change >= 0 ? 'text-gain' : 'text-loss')}>
+                  {change >= 0 ? '+' : ''}{change.toFixed(2)} ({changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%)
+                </span>
+              </div>
+              <p className="text-slate-400 text-xs mt-1">Sector: {sector}</p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleToggleWatch}
+                className={clsx(
+                  'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
+                  isWatched
+                    ? 'border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/10'
+                    : 'border-slate-200 text-slate-500 hover:text-yellow-400 hover:border-yellow-400/40'
+                )}
+              >
+                <Star size={14} className={clsx(isWatched && 'fill-yellow-400')} />
+                {isWatched ? 'Watching' : 'Watch'}
+              </button>
+              <button
+                onClick={() => setShowAddForm(v => !v)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-accent-blue hover:bg-accent-blue/80 text-white transition-colors"
+              >
+                <PlusCircle size={14} /> Add to Portfolio
+              </button>
+            </div>
+          </div>
+
+          {/* Add to portfolio form */}
+          {showAddForm && (
+            <form
+              onSubmit={handleAddToPortfolio}
+              className="bg-surface-card border border-slate-200 rounded-xl p-4 flex items-center gap-3"
+            >
+              <p className="text-slate-500 text-sm shrink-0">
+                Buy at <span className="text-slate-900 font-medium">${price.toFixed(2)}</span>
+              </p>
+              <input
+                type="number" min="0.001" step="any" placeholder="Number of shares"
+                value={shares} onChange={e => setShares(e.target.value)}
+                className="flex-1 bg-surface-hover text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200"
+                required
+              />
+              {shares && !isNaN(parseFloat(shares)) && (
+                <p className="text-slate-400 text-sm shrink-0">
+                  = ${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              )}
+              <button type="submit" className="bg-accent-blue hover:bg-accent-blue/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
+                Confirm
+              </button>
+              <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-900 text-sm shrink-0">✕</button>
+            </form>
+          )}
+
+          {/* Key stats */}
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: '52-Week High', value: high52w ? `$${high52w.toFixed(2)}` : '—' },
+              { label: '52-Week Low',  value: low52w  ? `$${low52w.toFixed(2)}`  : '—' },
+              { label: 'Volume',       value: snapshot?.volume ? `${(snapshot.volume / 1_000_000).toFixed(1)}M` : '—' },
+              { label: 'Prev Close',   value: snapshot?.prevClose ? `$${snapshot.prevClose.toFixed(2)}` : '—' },
+            ].map(stat => (
+              <div key={stat.label} className="bg-surface-card border border-slate-200 rounded-xl px-4 py-3">
+                <p className="text-slate-400 text-xs mb-1">{stat.label}</p>
+                <p className="text-slate-900 font-medium text-sm">{stat.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Company description */}
+          {details?.description && (
+            <div className="bg-surface-card border border-slate-200 rounded-xl px-5 py-4">
+              <p className="text-slate-400 text-xs mb-2">About</p>
+              <p className="text-slate-500 text-sm leading-relaxed line-clamp-3">{details.description}</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Price chart ───────────────────────────────── */}
+      <div className="bg-surface-card border border-slate-200 rounded-xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-slate-500 text-sm">Price History (Live)</p>
+          <div className="flex gap-1">
+            {RANGES.map(r => (
+              <button
+                key={r.label}
+                onClick={() => setRange(r.label)}
+                className={clsx(
+                  'px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                  range === r.label
+                    ? 'bg-accent-blue/20 text-accent-blue'
+                    : 'text-slate-400 hover:text-slate-900 hover:bg-surface-hover'
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loadingChart ? (
+          <div className="h-[300px] flex items-center justify-center">
+            <LoadingSpinner message="Loading chart…" />
+          </div>
+        ) : errorChart ? (
+          <ErrorMessage error={errorChart} />
+        ) : chartData.length === 0 ? (
+          <div className="h-[300px] flex items-center justify-center text-slate-400 text-sm">
+            No chart data available for this range.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: '#ffffff30', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                interval={Math.floor(chartData.length / 6)}
+                tickFormatter={d => {
+                  const date = new Date(d)
+                  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                }}
+              />
+              <YAxis
+                tick={{ fill: '#ffffff30', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={60}
+                tickFormatter={v => `$${v.toFixed(0)}`}
+                domain={['auto', 'auto']}
+              />
+              <Tooltip content={<ChartTooltip />} />
+              <ReferenceLine y={firstPrice} stroke="#ffffff15" strokeDasharray="4 4" />
+              <Line
+                type="monotone"
+                dataKey="close"
+                stroke={chartColor}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: chartColor, strokeWidth: 0 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  )
+}
