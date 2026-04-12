@@ -1,0 +1,60 @@
+# cloudbuild.yaml
+# Google Cloud Build pipeline — triggered on every push to main.
+#
+# Steps:
+#   1. Build the Docker image
+#   2. Push it to Artifact Registry
+#   3. Deploy to Cloud Run
+#
+# One-time setup required (see DEPLOY.md):
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_SERVICE=tradebuddy,_REGION=us-central1
+
+substitutions:
+  _SERVICE:    tradebuddy          # Cloud Run service name
+  _REGION:     us-central1         # Cloud Run region
+  _REPO:       tradebuddy          # Artifact Registry repo name
+
+steps:
+  # ── 1. Build Docker image ──────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+      - .
+
+  # ── 2. Push to Artifact Registry ──────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}
+
+  # ── 3. Deploy to Cloud Run ─────────────────────────────────────
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      # Secrets injected as environment variables from Secret Manager
+      - --set-secrets=JWT_SECRET=JWT_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest
+      # Non-secret env vars
+      - --set-env-vars=NODE_ENV=production,DB_USER=tradebuddy,DB_NAME=tradebuddy
+      # Cloud SQL connection (replace PROJECT:REGION:INSTANCE with yours)
+      - --add-cloudsql-instances=$PROJECT_ID:${_REGION}:tradebuddy-db
+      - --set-env-vars=DB_SOCKET_PATH=/cloudsql/$PROJECT_ID:${_REGION}:tradebuddy-db
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY

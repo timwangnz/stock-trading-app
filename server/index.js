@@ -30,6 +30,8 @@ import express        from 'express'
 import cors           from 'cors'
 import bcrypt         from 'bcryptjs'
 import { randomUUID } from 'crypto'
+import { fileURLToPath } from 'url'
+import { join, dirname } from 'path'
 import pool           from './db.js'
 import { verifyGoogleToken, signJwt, authMiddleware } from './auth.js'
 import { requireRole, requirePermission, PERMISSIONS } from './rbac.js'
@@ -37,14 +39,23 @@ import { runTradingAgent } from './agent.js'
 import { log as audit } from './audit.js'
 import marketRouter from './market.js'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const app  = express()
-const PORT = process.env.API_PORT || 3001
+// Cloud Run sets PORT automatically; fall back to 3001 for local dev
+const PORT = process.env.PORT || process.env.API_PORT || 3001
+
+// In production the frontend is built into /dist and served here.
+// In dev, Vite's own dev server handles the frontend.
+const isProd = process.env.NODE_ENV === 'production'
 
 app.use(cors())
 app.use(express.json())
 
-// ── Market data proxy (Polygon.io — key stays on server) ────────
-app.use('/api/market', marketRouter)
+// ── Serve React build (production only) ─────────────────────────
+if (isProd) {
+  const distDir = join(__dirname, '../dist')
+  app.use(express.static(distDir))
+}
 
 // ── Health ──────────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {
@@ -438,7 +449,16 @@ app.get('/api/admin/audit', adminOnly, async (req, res) => {
   }
 })
 
+// ── Catch-all: serve React app for any non-API route (production) ──
+// Must come AFTER all /api/* routes so the API still works.
+if (isProd) {
+  const distDir = join(__dirname, '../dist')
+  app.get('*', (_req, res) => {
+    res.sendFile(join(distDir, 'index.html'))
+  })
+}
+
 // ── Start ───────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ TradeBuddy API running at http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ TradeBuddy API running on port ${PORT} (${isProd ? 'production' : 'development'})`)
 })
