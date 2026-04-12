@@ -24,10 +24,11 @@ export function ErrorMessage({ error }) {
       <div>
         <p className="text-loss font-medium text-sm">Failed to load data</p>
         <p className="text-muted text-xs mt-1 font-mono">{msg}</p>
-        {msg.includes('VITE_POLYGON_API_KEY') && (
+        {msg.includes('POLYGON_API_KEY') && (
           <p className="text-muted text-xs mt-2">
-            👉 Make sure you've created a <code className="bg-surface-hover px-1 rounded">.env</code> file
-            with your Polygon API key. See <strong>SETUP.md</strong> for instructions.
+            👉 Make sure <code className="bg-surface-hover px-1 rounded">POLYGON_API_KEY</code> is set
+            in your server <code className="bg-surface-hover px-1 rounded">.env</code> file.
+            See <strong>SETUP.md</strong> for instructions.
           </p>
         )}
       </div>

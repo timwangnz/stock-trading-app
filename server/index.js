@@ -35,12 +35,16 @@ import { verifyGoogleToken, signJwt, authMiddleware } from './auth.js'
 import { requireRole, requirePermission, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
 import { log as audit } from './audit.js'
+import marketRouter from './market.js'
 
 const app  = express()
 const PORT = process.env.API_PORT || 3001
 
 app.use(cors())
 app.use(express.json())
+
+// ── Market data proxy (Polygon.io — key stays on server) ────────
+app.use('/api/market', marketRouter)
 
 // ── Health ──────────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {
