@@ -11,7 +11,7 @@ import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
 import { searchTickers } from '../services/polygonApi'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
-import { pieColors as COLORS, chart as chartTheme } from '../theme'
+import { useTheme } from '../context/ThemeContext'
 import clsx from 'clsx'
 
 /**
@@ -91,11 +91,11 @@ function StockSearchInput({ value, onChange }) {
       {/* Input box */}
       <div className={clsx(
         'flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2 border transition-colors',
-        showDropdown ? 'border-accent-blue/50' : 'border-slate-200'
+        showDropdown ? 'border-accent-blue/50' : 'border-border'
       )}>
         {searching
           ? <Loader2 size={13} className="text-accent-blue shrink-0 animate-spin" />
-          : <Search  size={13} className="text-slate-400 shrink-0" />
+          : <Search  size={13} className="text-muted shrink-0" />
         }
         <input
           ref={inputRef}
@@ -105,7 +105,7 @@ function StockSearchInput({ value, onChange }) {
           onChange={handleChange}
           onFocus={() => results.length > 0 && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
-          className="bg-transparent text-slate-900 text-sm placeholder-slate-400 outline-none w-full"
+          className="bg-transparent text-primary text-sm placeholder-muted outline-none w-full"
           autoComplete="off"
         />
         {confirmed && (
@@ -113,21 +113,21 @@ function StockSearchInput({ value, onChange }) {
         )}
         {query && (
           <button type="button" onClick={handleClear} tabIndex={-1}>
-            <X size={12} className="text-slate-400 hover:text-slate-900 shrink-0" />
+            <X size={12} className="text-muted hover:text-primary shrink-0" />
           </button>
         )}
       </div>
 
       {/* Dropdown */}
       {showDropdown && (
-        <ul className="absolute top-full mt-1 w-72 bg-surface-card border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
+        <ul className="absolute top-full mt-1 w-72 bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
           {searching && results.length === 0 && (
-            <li className="flex items-center gap-2 px-4 py-3 text-slate-400 text-xs">
+            <li className="flex items-center gap-2 px-4 py-3 text-muted text-xs">
               <Loader2 size={12} className="animate-spin" /> Searching Polygon…
             </li>
           )}
           {!searching && results.length === 0 && query.length >= 1 && (
-            <li className="px-4 py-3 text-slate-400 text-xs">No results for "{query}"</li>
+            <li className="px-4 py-3 text-muted text-xs">No results for "{query}"</li>
           )}
           {results.map(stock => (
             <li key={stock.symbol}>
@@ -139,8 +139,8 @@ function StockSearchInput({ value, onChange }) {
                 <span className="text-accent-blue font-mono text-sm font-bold w-14 shrink-0">
                   {stock.symbol}
                 </span>
-                <span className="text-slate-500 text-xs truncate">{stock.name}</span>
-                <span className="ml-auto text-slate-300 text-xs shrink-0 uppercase">{stock.type}</span>
+                <span className="text-muted text-xs truncate">{stock.name}</span>
+                <span className="ml-auto text-faint text-xs shrink-0 uppercase">{stock.type}</span>
               </button>
             </li>
           ))}
@@ -165,21 +165,21 @@ function AddHoldingForm({ onAdd, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-surface-card border border-slate-200 rounded-xl p-4 space-y-3">
-      <h3 className="text-slate-900 text-sm font-semibold">Add Holding</h3>
+    <form onSubmit={handleSubmit} className="bg-surface-card border border-border rounded-xl p-4 space-y-3">
+      <h3 className="text-primary text-sm font-semibold">Add Holding</h3>
       <div className="grid grid-cols-3 gap-2">
         {/* Searchable stock picker replaces the old <select> */}
         <StockSearchInput value={symbol} onChange={setSymbol} />
         <input
           type="number" min="0.001" step="any" placeholder="Shares"
           value={shares} onChange={e => setShares(e.target.value)}
-          className="bg-surface-hover text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200"
+          className="bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
           required
         />
         <input
           type="number" min="0.01" step="any" placeholder="Avg cost ($)"
           value={avgCost} onChange={e => setAvgCost(e.target.value)}
-          className="bg-surface-hover text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200"
+          className="bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
           required
         />
       </div>
@@ -191,9 +191,9 @@ function AddHoldingForm({ onAdd, onCancel }) {
         >
           Add to Portfolio
         </button>
-        <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-900 text-sm px-3 py-2 transition-colors">Cancel</button>
+        <button type="button" onClick={onCancel} className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors">Cancel</button>
         {!symbol && (
-          <span className="text-slate-400 text-xs ml-1">← Select a stock first</span>
+          <span className="text-muted text-xs ml-1">← Select a stock first</span>
         )}
       </div>
     </form>
@@ -253,7 +253,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
   }
 
   return (
-    <tr className="bg-surface-hover/50 border-t border-slate-200">
+    <tr className="bg-surface-hover/50 border-t border-border">
       <td colSpan={7} className="px-5 py-4">
         <form onSubmit={handleSubmit}>
           <div className="flex items-start gap-4 flex-wrap">
@@ -269,45 +269,45 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
 
             {/* Shares input */}
             <div className="flex flex-col gap-1">
-              <label className="text-slate-400 text-xs">Shares</label>
+              <label className="text-muted text-xs">Shares</label>
               <input
                 type="number" min="0.001" step="any"
                 placeholder={isBuy ? 'How many to buy' : `Max ${holding.shares}`}
                 value={qty} onChange={e => setQty(e.target.value)}
                 autoFocus
-                className="bg-surface-card text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200 w-40 focus:border-accent-blue/50 transition-colors"
+                className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-40 focus:border-accent-blue/50 transition-colors"
               />
             </div>
 
             {/* Price input (buy only) */}
             {isBuy && (
               <div className="flex flex-col gap-1">
-                <label className="text-slate-400 text-xs">Price per share ($)</label>
+                <label className="text-muted text-xs">Price per share ($)</label>
                 <input
                   type="number" min="0.01" step="any"
                   value={price} onChange={e => setPrice(e.target.value)}
-                  className="bg-surface-card text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200 w-36 focus:border-accent-blue/50 transition-colors"
+                  className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
                 />
               </div>
             )}
 
             {/* Live preview */}
             {qty && !isNaN(shares) && shares > 0 && (
-              <div className="flex flex-col gap-1 mt-2 text-xs text-slate-400 min-w-0">
+              <div className="flex flex-col gap-1 mt-2 text-xs text-muted min-w-0">
                 {isBuy && totalCash !== null && (
-                  <p>Total cost: <span className="text-slate-900 font-medium">${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                  <p>Total cost: <span className="text-primary font-medium">${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
                 )}
                 {isBuy && newAvgCost !== null && (
-                  <p>New avg cost: <span className="text-slate-900 font-medium">${newAvgCost.toFixed(2)}</span></p>
+                  <p>New avg cost: <span className="text-primary font-medium">${newAvgCost.toFixed(2)}</span></p>
                 )}
                 {!isBuy && sellPct !== null && (
                   <p>
-                    Selling <span className="text-slate-900 font-medium">{sellPct}%</span> of position
+                    Selling <span className="text-primary font-medium">{sellPct}%</span> of position
                     {shares >= holding.shares && <span className="text-loss ml-1">(full exit)</span>}
                   </p>
                 )}
                 {!isBuy && totalCash !== null && holding.price > 0 && (
-                  <p>Proceeds: <span className="text-slate-900 font-medium">${(shares * holding.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                  <p>Proceeds: <span className="text-primary font-medium">${(shares * holding.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
                 )}
               </div>
             )}
@@ -328,7 +328,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
               </button>
               <button
                 type="button" onClick={onClose}
-                className="text-slate-400 hover:text-slate-900 text-sm px-3 py-2 transition-colors"
+                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors"
               >
                 Cancel
               </button>
@@ -343,6 +343,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
 export default function Portfolio() {
   const { state, dispatch } = useApp()
   const { canTrade, isReadonly } = useAuth()
+  const { chart: chartTheme, pieColors: COLORS } = useTheme()
   const [showAddForm, setShowAddForm] = useState(false)
   // activePanel: { symbol, mode: 'buy'|'sell' } or null
   const [activePanel, setActivePanel] = useState(null)
@@ -379,35 +380,35 @@ export default function Portfolio() {
 
       {/* ── Summary cards ────────────────────────────── */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
-              <DollarSign size={14} className="text-slate-400" />
-              <p className="text-slate-400 text-xs">Total Value</p>
+              <DollarSign size={14} className="text-muted" />
+              <p className="text-muted text-xs">Total Value</p>
             </div>
-            <button onClick={refetch} className="text-slate-300 hover:text-slate-500 transition-colors" title="Refresh prices">
+            <button onClick={refetch} className="text-faint hover:text-muted transition-colors" title="Refresh prices">
               <RefreshCw size={11} />
             </button>
           </div>
-          <p className="text-slate-900 font-bold text-2xl">
+          <p className="text-primary font-bold text-2xl">
             ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
 
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-1">
-            <TrendingUp size={14} className="text-slate-400" />
-            <p className="text-slate-400 text-xs">Unrealized P&L</p>
+            <TrendingUp size={14} className="text-muted" />
+            <p className="text-muted text-xs">Unrealized P&L</p>
           </div>
           <p className={clsx('font-bold text-2xl', totalGain >= 0 ? 'text-gain' : 'text-loss')}>
             {totalGain >= 0 ? '+' : ''}${totalGain.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
 
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-1">
-            <Percent size={14} className="text-slate-400" />
-            <p className="text-slate-400 text-xs">Return %</p>
+            <Percent size={14} className="text-muted" />
+            <p className="text-muted text-xs">Return %</p>
           </div>
           <p className={clsx('font-bold text-2xl', totalGainPct >= 0 ? 'text-gain' : 'text-loss')}>
             {totalGainPct >= 0 ? '+' : ''}{totalGainPct.toFixed(2)}%
@@ -417,8 +418,8 @@ export default function Portfolio() {
 
       {/* ── Allocation pie chart ─────────────────────── */}
       {holdings.length > 0 && totalValue > 0 && (
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-5">
-          <p className="text-slate-400 text-xs mb-4">Portfolio Allocation</p>
+        <div className="bg-surface-card border border-border rounded-xl p-5">
+          <p className="text-muted text-xs mb-4">Portfolio Allocation</p>
           <div className="flex items-center gap-6">
 
             {/* Pie */}
@@ -470,11 +471,11 @@ export default function Portfolio() {
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: COLORS[i % COLORS.length] }}
                     />
-                    <span className="text-slate-600 text-xs font-mono font-semibold w-14 shrink-0">
+                    <span className="text-secondary text-xs font-mono font-semibold w-14 shrink-0">
                       {h.symbol}
                     </span>
                     {/* Bar */}
-                    <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="flex-1 bg-surface-hover rounded-full h-1.5 overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all"
                         style={{
@@ -483,10 +484,10 @@ export default function Portfolio() {
                         }}
                       />
                     </div>
-                    <span className="text-slate-400 text-xs w-10 text-right shrink-0">
+                    <span className="text-muted text-xs w-10 text-right shrink-0">
                       {pct.toFixed(1)}%
                     </span>
-                    <span className="text-slate-400 text-xs w-20 text-right shrink-0 hidden sm:block">
+                    <span className="text-muted text-xs w-20 text-right shrink-0 hidden sm:block">
                       ${h.value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </span>
                   </div>
@@ -499,9 +500,9 @@ export default function Portfolio() {
       )}
 
       {/* ── Holdings table ───────────────────────────── */}
-      <div className="bg-surface-card border border-slate-200 rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
-          <h2 className="text-slate-900 text-sm font-semibold">Holdings ({holdings.length})</h2>
+      <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <h2 className="text-primary text-sm font-semibold">Holdings ({holdings.length})</h2>
           {canTrade ? (
             <button
               onClick={() => setShowAddForm(v => !v)}
@@ -510,12 +511,12 @@ export default function Portfolio() {
               <PlusCircle size={14} /> Add Holding
             </button>
           ) : (
-            <span className="text-slate-300 text-xs italic">view only</span>
+            <span className="text-faint text-xs italic">view only</span>
           )}
         </div>
 
         {showAddForm && (
-          <div className="p-4 border-b border-slate-200">
+          <div className="p-4 border-b border-border">
             <AddHoldingForm
               onAdd={h => { dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload: h }); setShowAddForm(false) }}
               onCancel={() => setShowAddForm(false)}
@@ -524,11 +525,11 @@ export default function Portfolio() {
         )}
 
         {holdings.length === 0 ? (
-          <div className="px-5 py-12 text-center text-slate-400 text-sm">No holdings yet. Click "Add Holding" to get started.</div>
+          <div className="px-5 py-12 text-center text-muted text-sm">No holdings yet. Click "Add Holding" to get started.</div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-slate-400 text-xs">
+              <tr className="text-muted text-xs">
                 <th className="text-left px-5 py-3 font-medium">Symbol</th>
                 <th className="text-right px-5 py-3 font-medium">Shares</th>
                 <th className="text-right px-5 py-3 font-medium">Avg Cost</th>
@@ -553,21 +554,21 @@ export default function Portfolio() {
                     <tr
                       key={h.symbol}
                       className={clsx(
-                        'border-t border-slate-200 transition-colors',
+                        'border-t border-border transition-colors',
                         panelOpen ? 'bg-surface-hover' : 'hover:bg-surface-hover'
                       )}
                     >
                       {/* Symbol */}
                       <td className="px-5 py-3">
                         <button onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: h.symbol })} className="text-left">
-                          <p className="text-slate-900 font-mono font-semibold">{h.symbol}</p>
-                          <p className="text-slate-400 text-xs">{h.name}</p>
+                          <p className="text-primary font-mono font-semibold">{h.symbol}</p>
+                          <p className="text-muted text-xs">{h.name}</p>
                         </button>
                       </td>
-                      <td className="text-right px-5 py-3 text-slate-600">{h.shares}</td>
-                      <td className="text-right px-5 py-3 text-slate-600">${h.avgCost.toFixed(2)}</td>
-                      <td className="text-right px-5 py-3 text-slate-900">${h.price.toFixed(2)}</td>
-                      <td className="text-right px-5 py-3 text-slate-900 font-medium">
+                      <td className="text-right px-5 py-3 text-secondary">{h.shares}</td>
+                      <td className="text-right px-5 py-3 text-secondary">${h.avgCost.toFixed(2)}</td>
+                      <td className="text-right px-5 py-3 text-primary">${h.price.toFixed(2)}</td>
+                      <td className="text-right px-5 py-3 text-primary font-medium">
                         ${h.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="text-right px-5 py-3">
@@ -590,7 +591,7 @@ export default function Portfolio() {
                                 'px-2 py-1 rounded text-xs font-medium border transition-colors',
                                 panelOpen && panelMode === 'buy'
                                   ? 'bg-gain/20 border-gain/40 text-gain'
-                                  : 'border-slate-200 text-slate-400 hover:border-gain/40 hover:text-gain'
+                                  : 'border-border text-muted hover:border-gain/40 hover:text-gain'
                               )}
                             >
                               Buy
@@ -602,7 +603,7 @@ export default function Portfolio() {
                                 'px-2 py-1 rounded text-xs font-medium border transition-colors',
                                 panelOpen && panelMode === 'sell'
                                   ? 'bg-loss/20 border-loss/40 text-loss'
-                                  : 'border-slate-200 text-slate-400 hover:border-loss/40 hover:text-loss'
+                                  : 'border-border text-muted hover:border-loss/40 hover:text-loss'
                               )}
                             >
                               Sell
@@ -610,13 +611,13 @@ export default function Portfolio() {
                             <button
                               onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_PORTFOLIO, payload: h.symbol })}
                               title="Remove holding"
-                              className="text-slate-300 hover:text-loss transition-colors ml-1"
+                              className="text-faint hover:text-loss transition-colors ml-1"
                             >
                               <Trash2 size={13} />
                             </button>
                           </div>
                         ) : (
-                          <span className="text-slate-300 text-xs italic text-right block">view only</span>
+                          <span className="text-faint text-xs italic text-right block">view only</span>
                         )}
                       </td>
                     </tr>

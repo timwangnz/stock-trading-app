@@ -14,14 +14,14 @@ import { Eye, EyeOff, CheckCircle2 } from 'lucide-react'
 function Field({ label, type = 'text', value, onChange, placeholder, right }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-slate-500 text-xs">{label}</label>
+      <label className="text-muted text-xs">{label}</label>
       <div className="relative">
         <input
           type={type}
           value={value}
           onChange={onChange}
           placeholder={placeholder}
-          className="w-full bg-surface-hover border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-accent-blue/50 transition-colors"
+          className="w-full bg-surface-hover border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-accent-blue/50 transition-colors"
         />
         {right && <div className="absolute right-2 top-1/2 -translate-y-1/2">{right}</div>}
       </div>
@@ -78,7 +78,7 @@ function EmailForm({ onSuccess }) {
 
   const pwToggle = (
     <button type="button" onClick={() => setShowPw(v => !v)} tabIndex={-1}
-      className="text-slate-400 hover:text-slate-900 transition-colors">
+      className="text-muted hover:text-primary transition-colors">
       {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
     </button>
   )
@@ -124,7 +124,7 @@ function EmailForm({ onSuccess }) {
         {loading ? 'Please wait…' : isSignUp ? 'Create Account' : 'Sign In'}
       </button>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-muted">
         {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
         <button type="button" onClick={toggle}
           className="text-accent-blue hover:underline">
@@ -160,12 +160,12 @@ export default function Login() {
           alt="TradeBuddy"
           className="h-16 w-16 rounded-2xl object-cover shadow-xl"
         />
-        <h1 className="text-slate-900 font-bold text-3xl tracking-tight">TradeBuddy</h1>
-        <p className="text-slate-400 text-sm">Vibe Trading Platform</p>
+        <h1 className="text-primary font-bold text-3xl tracking-tight">TradeBuddy</h1>
+        <p className="text-muted text-sm">Vibe Trading Platform</p>
       </div>
 
       {/* Card */}
-      <div className="bg-surface-card border border-slate-200 rounded-2xl p-6 w-80 shadow-2xl space-y-5">
+      <div className="bg-surface-card border border-border rounded-2xl p-6 w-80 shadow-2xl space-y-5">
 
         {/* Tabs */}
         <div className="flex rounded-lg bg-surface-hover p-1 gap-1">
@@ -178,8 +178,8 @@ export default function Login() {
               onClick={() => { setTab(t.key); setError(null) }}
               className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 tab === t.key
-                  ? 'bg-surface-card text-slate-900 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-900'
+                  ? 'bg-surface-card text-primary shadow-sm'
+                  : 'text-muted hover:text-primary'
               }`}
             >
               {t.label}
@@ -190,7 +190,7 @@ export default function Login() {
         {/* Tab content */}
         {tab === 'google' ? (
           <div className="flex flex-col items-center gap-3">
-            <p className="text-slate-500 text-sm text-center">
+            <p className="text-muted text-sm text-center">
               Sign in with your Google account
             </p>
             <GoogleLogin
@@ -207,7 +207,7 @@ export default function Login() {
         )}
       </div>
 
-      <p className="text-slate-300 text-xs">
+      <p className="text-faint text-xs">
         Your data is private and tied to your account.
       </p>
     </div>

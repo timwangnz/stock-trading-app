@@ -52,22 +52,22 @@ export default function AgentPanel({ open, onClose }) {
       <aside
         className={`
           fixed top-0 right-0 h-screen w-[420px] z-50
-          bg-surface-card border-l border-slate-200
+          bg-surface-card border-l border-border
           flex flex-col shadow-2xl
           transition-transform duration-300 ease-in-out
           ${open ? 'translate-x-0' : 'translate-x-full'}
         `}
       >
         {/* Panel header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles size={15} className="text-accent-blue" />
-            <span className="text-slate-900 font-semibold text-sm">Trading Agent</span>
-            <span className="text-slate-400 text-xs">· powered by Claude</span>
+            <span className="text-primary font-semibold text-sm">Trading Agent</span>
+            <span className="text-muted text-xs">· powered by Claude</span>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-surface-hover transition-colors"
+            className="p-1.5 rounded-lg text-muted hover:text-primary hover:bg-surface-hover transition-colors"
             title="Close panel (Esc)"
           >
             <X size={16} />

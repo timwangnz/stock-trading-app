@@ -83,9 +83,9 @@ export default function Watchlist() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Star size={16} className="text-yellow-400 fill-yellow-400" />
-            <p className="text-slate-500 text-sm">{watchlistStocks.length} stocks</p>
+            <p className="text-muted text-sm">{watchlistStocks.length} stocks</p>
           </div>
-          <button onClick={refetch} className="text-slate-300 hover:text-slate-500 transition-colors flex items-center gap-1 text-xs" title="Refresh">
+          <button onClick={refetch} className="text-faint hover:text-muted transition-colors flex items-center gap-1 text-xs" title="Refresh">
             <RefreshCw size={11} /> Refresh
           </button>
         </div>
@@ -102,13 +102,13 @@ export default function Watchlist() {
 
       {/* ── Add stock search ─────────────────────────── */}
       {showPicker && (
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="relative">
             {/* Search input */}
-            <div className="flex items-center gap-2 bg-surface-hover border border-slate-200 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-2 bg-surface-hover border border-border rounded-lg px-3 py-2">
               {searching
-                ? <Loader2 size={14} className="text-slate-400 shrink-0 animate-spin" />
-                : <Search  size={14} className="text-slate-400 shrink-0" />
+                ? <Loader2 size={14} className="text-muted shrink-0 animate-spin" />
+                : <Search  size={14} className="text-muted shrink-0" />
               }
               <input
                 ref={inputRef}
@@ -118,11 +118,11 @@ export default function Watchlist() {
                 onChange={e => setQuery(e.target.value)}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
-                className="bg-transparent text-sm text-slate-900 placeholder-slate-400 outline-none w-full"
+                className="bg-transparent text-sm text-primary placeholder-muted outline-none w-full"
               />
               <button
                 onClick={handleClosePicker}
-                className="text-slate-400 hover:text-slate-900 text-sm ml-1 transition-colors"
+                className="text-muted hover:text-primary text-sm ml-1 transition-colors"
               >✕</button>
             </div>
 
@@ -130,12 +130,12 @@ export default function Watchlist() {
             {showDropdown && (
               <ul
                 onMouseDown={e => e.preventDefault()}
-                className="absolute top-full mt-1 w-full bg-surface-card border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden"
+                className="absolute top-full mt-1 w-full bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden"
               >
                 {searching && results.length === 0 ? (
-                  <li className="px-4 py-3 text-slate-400 text-sm">Searching…</li>
+                  <li className="px-4 py-3 text-muted text-sm">Searching…</li>
                 ) : results.length === 0 ? (
-                  <li className="px-4 py-3 text-slate-400 text-sm">No results found.</li>
+                  <li className="px-4 py-3 text-muted text-sm">No results found.</li>
                 ) : (
                   results.map(stock => (
                     <li key={stock.symbol}>
@@ -146,9 +146,9 @@ export default function Watchlist() {
                         <span className="text-accent-blue font-mono text-sm font-semibold w-16 shrink-0">
                           {stock.symbol}
                         </span>
-                        <span className="text-slate-500 text-sm truncate">{stock.name}</span>
+                        <span className="text-muted text-sm truncate">{stock.name}</span>
                         {stock.type && stock.type !== 'CS' && (
-                          <span className="ml-auto text-slate-300 text-xs shrink-0">{stock.type}</span>
+                          <span className="ml-auto text-faint text-xs shrink-0">{stock.type}</span>
                         )}
                       </button>
                     </li>
@@ -162,14 +162,14 @@ export default function Watchlist() {
 
       {/* ── Watchlist table ──────────────────────────── */}
       {state.watchlist.length === 0 ? (
-        <div className="bg-surface-card border border-slate-200 rounded-xl px-5 py-16 text-center">
-          <StarOff size={32} className="text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">Your watchlist is empty.</p>
-          <p className="text-slate-300 text-xs mt-1">Click "Add Stock" to start tracking stocks.</p>
+        <div className="bg-surface-card border border-border rounded-xl px-5 py-16 text-center">
+          <StarOff size={32} className="text-faint mx-auto mb-3" />
+          <p className="text-muted text-sm">Your watchlist is empty.</p>
+          <p className="text-faint text-xs mt-1">Click "Add Stock" to start tracking stocks.</p>
         </div>
       ) : (
-        <div className="bg-surface-card border border-slate-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-5 py-3 border-b border-slate-200 text-slate-400 text-xs font-medium">
+        <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-5 py-3 border-b border-border text-muted text-xs font-medium">
             <span>Stock</span>
             <span className="text-right w-20">Price (Live)</span>
             <span className="text-right w-24">Day Change</span>
@@ -188,16 +188,16 @@ export default function Watchlist() {
                 className={clsx(
                   'grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-5 py-3 items-center',
                   'hover:bg-surface-hover transition-colors',
-                  idx > 0 && 'border-t border-slate-200'
+                  idx > 0 && 'border-t border-border'
                 )}
               >
                 <button onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: s.symbol })} className="text-left">
-                  <p className="text-slate-900 font-mono font-semibold">{s.symbol}</p>
-                  <p className="text-slate-400 text-xs">{s.name}</p>
+                  <p className="text-primary font-mono font-semibold">{s.symbol}</p>
+                  <p className="text-muted text-xs">{s.name}</p>
                 </button>
 
                 <div className="text-right w-20">
-                  <p className="text-slate-900 font-medium">${s.price.toFixed(2)}</p>
+                  <p className="text-primary font-medium">${s.price.toFixed(2)}</p>
                 </div>
 
                 <div className="text-right w-24">
@@ -210,7 +210,7 @@ export default function Watchlist() {
                 </div>
 
                 <div className="w-36">
-                  <div className="flex justify-between text-slate-400 text-xs mb-1">
+                  <div className="flex justify-between text-muted text-xs mb-1">
                     <span>${low52w.toFixed(0)}</span>
                     <span>${high52w.toFixed(0)}</span>
                   </div>
@@ -242,7 +242,7 @@ export default function Watchlist() {
         </div>
       )}
 
-      <p className="text-slate-300 text-xs text-center">
+      <p className="text-faint text-xs text-center">
         💡 Click any stock name to see its full price chart
       </p>
     </div>

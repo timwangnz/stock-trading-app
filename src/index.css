@@ -3,6 +3,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens (CSS custom properties) ─────────────── */
+/*    Edit values here to restyle the entire app.          */
+:root {
+  /* Surface */
+  --surface:       248 250 252;   /* #f8fafc  page canvas        */
+  --surface-card:  255 255 255;   /* #ffffff  cards & panels     */
+  --surface-hover: 241 245 249;   /* #f1f5f9  hover / input fill */
+
+  /* Accent */
+  --accent-blue:   37  99  235;   /* #2563eb  CTAs               */
+  --accent-purple: 124 58  237;   /* #7c3aed  highlights         */
+
+  /* Semantic */
+  --gain: 22  163 74;             /* #16a34a  green              */
+  --loss: 220 38  38;             /* #dc2626  red                */
+
+  /* Text */
+  --text-primary:   15  23  42;   /* slate-900                   */
+  --text-secondary: 71  85  105;  /* slate-600                   */
+  --text-muted:     148 163 184;  /* slate-400                   */
+  --text-faint:     203 213 225;  /* slate-300                   */
+
+  /* Borders */
+  --border: 226 232 240;          /* slate-200                   */
+
+  /* Chart (hex, used for recharts inline props) */
+  --chart-grid:         #e2e8f0;
+  --chart-axis:         #94a3b8;
+  --chart-reference:    #cbd5e1;
+  --chart-tooltip-bg:   #ffffff;
+  --chart-tooltip-border: #e2e8f0;
+  --chart-tooltip-text: #0f172a;
+}
+
+[data-theme="dark"] {
+  /* Surface */
+  --surface:       30  33  48;    /* #1e2130                     */
+  --surface-card:  39  43  61;    /* #272b3d                     */
+  --surface-hover: 49  54  82;    /* #313652                     */
+
+  /* Accent */
+  --accent-blue:   96  165 250;   /* #60a5fa  lighter on dark    */
+  --accent-purple: 167 139 250;   /* #a78bfa                     */
+
+  /* Semantic */
+  --gain: 74  222 128;            /* #4ade80                     */
+  --loss: 248 113 113;            /* #f87171                     */
+
+  /* Text */
+  --text-primary:   248 250 252;  /* slate-50  / near-white      */
+  --text-secondary: 203 213 225;  /* slate-300                   */
+  --text-muted:     148 163 184;  /* slate-400                   */
+  --text-faint:     100 116 139;  /* slate-500                   */
+
+  /* Borders */
+  --border: 55 62 88;             /* subtle dark divider         */
+
+  /* Chart */
+  --chart-grid:           rgba(255,255,255,0.06);
+  --chart-axis:           rgba(255,255,255,0.30);
+  --chart-reference:      rgba(255,255,255,0.12);
+  --chart-tooltip-bg:     #272b3d;
+  --chart-tooltip-border: rgba(255,255,255,0.08);
+  --chart-tooltip-text:   #ffffff;
+}
+
 /* ── Base styles ──────────────────────────────────────── */
 @layer base {
   html {
@@ -12,15 +78,15 @@
   }
 
   body {
-    @apply bg-surface text-slate-900;
+    @apply bg-surface text-primary;
     margin: 0;
   }
 
-  /* Custom scrollbar for light theme */
+  /* Scrollbar adapts to theme */
   ::-webkit-scrollbar        { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track  { background: transparent; }
-  ::-webkit-scrollbar-thumb  { background: #94a3b830; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #94a3b860; }
+  ::-webkit-scrollbar-thumb  { background: rgb(var(--text-muted) / 0.25); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--text-muted) / 0.45); }
 
   /* Number inputs: hide spin arrows */
   input[type='number']::-webkit-inner-spin-button,

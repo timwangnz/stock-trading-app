@@ -44,10 +44,10 @@ const ROLE_META = {
     description: 'Edit portfolio & watchlist',
   },
   readonly: {
-    color:       'text-slate-400',
-    bg:          'bg-slate-100',
-    border:      'border-slate-200',
-    badge:       'text-slate-400 bg-slate-100 border-slate-200',
+    color:       'text-muted',
+    bg:          'bg-surface-hover',
+    border:      'border-border',
+    badge:       'text-muted bg-surface-hover border-border',
     description: 'View only — no edits',
   },
 }
@@ -108,9 +108,9 @@ function RolePicker({ currentRole, userId, isSelf, onSave, onClose }) {
   return (
     <div
       ref={ref}
-      className="absolute top-full mt-1 right-0 z-50 w-60 bg-surface-card border border-slate-200 rounded-xl shadow-2xl p-2 space-y-1"
+      className="absolute top-full mt-1 right-0 z-50 w-60 bg-surface-card border border-border rounded-xl shadow-2xl p-2 space-y-1"
     >
-      <p className="text-slate-400 text-xs px-2 pt-1 pb-0.5">Assign role</p>
+      <p className="text-muted text-xs px-2 pt-1 pb-0.5">Assign role</p>
 
       {ROLES.map(role => {
         const meta       = ROLE_META[role]
@@ -137,19 +137,19 @@ function RolePicker({ currentRole, userId, isSelf, onSave, onClose }) {
                 {role}
               </span>
               {isCurrent && (
-                <span className="ml-1.5 text-slate-400 text-xs font-normal">current</span>
+                <span className="ml-1.5 text-muted text-xs font-normal">current</span>
               )}
-              <p className="text-slate-400 text-xs mt-0.5 truncate">{meta.description}</p>
+              <p className="text-muted text-xs mt-0.5 truncate">{meta.description}</p>
             </div>
             {isSelected && <Check size={13} className={clsx('shrink-0', meta.color)} />}
           </button>
         )
       })}
 
-      <div className="pt-1 border-t border-slate-200 flex gap-2">
+      <div className="pt-1 border-t border-border flex gap-2">
         <button
           onClick={onClose}
-          className="flex-1 text-xs py-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-surface-hover transition-colors"
+          className="flex-1 text-xs py-1.5 rounded-lg text-muted hover:text-primary hover:bg-surface-hover transition-colors"
         >
           Cancel
         </button>
@@ -187,8 +187,8 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
           className={clsx(
             'text-xs px-3 py-1 rounded-full border transition-colors',
             filter === 'all'
-              ? 'text-slate-900 border-slate-300 bg-slate-100'
-              : 'text-slate-400 border-slate-200 hover:text-slate-900 hover:border-slate-300'
+              ? 'text-primary border-border bg-surface-hover'
+              : 'text-muted border-border hover:text-primary hover:border-border'
           )}
         >
           All ({users.length})
@@ -201,7 +201,7 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
               'text-xs px-3 py-1 rounded-full border transition-colors',
               filter === r
                 ? `${ROLE_META[r].color} ${ROLE_META[r].border} ${ROLE_META[r].bg}`
-                : 'text-slate-400 border-slate-200 hover:text-slate-900 hover:border-slate-300'
+                : 'text-muted border-border hover:text-primary hover:border-border'
             )}
           >
             {r} ({counts[r] ?? 0})
@@ -211,15 +211,15 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
 
       {/* User list */}
       {loading ? (
-        <div className="text-slate-400 text-sm text-center py-12">Loading users…</div>
+        <div className="text-muted text-sm text-center py-12">Loading users…</div>
       ) : filtered.length === 0 ? (
-        <div className="text-slate-300 text-sm text-center py-12">
+        <div className="text-faint text-sm text-center py-12">
           No users with role "{filter}"
         </div>
       ) : (
-        <div className="bg-surface-card border border-slate-200 rounded-xl overflow-visible">
+        <div className="bg-surface-card border border-border rounded-xl overflow-visible">
           {filtered.map((u, idx) => (
-            <div key={u.id} className={clsx(idx > 0 && 'border-t border-slate-200')}>
+            <div key={u.id} className={clsx(idx > 0 && 'border-t border-border')}>
 
               {/* Row */}
               <div className={clsx(
@@ -237,7 +237,7 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
                         className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                       />
-                    : <div className="w-full h-full bg-accent-blue/30 flex items-center justify-center text-slate-900 text-xs font-bold">
+                    : <div className="w-full h-full bg-accent-blue/30 flex items-center justify-center text-primary text-xs font-bold">
                         {u.name?.[0] ?? '?'}
                       </div>
                   }
@@ -245,16 +245,16 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
 
                 {/* Name + email */}
                 <button className="text-left min-w-0" onClick={() => onExpand(u.id)}>
-                  <p className="text-slate-900 text-sm font-medium truncate flex items-center gap-2">
+                  <p className="text-primary text-sm font-medium truncate flex items-center gap-2">
                     {u.name}
                     {u.id === me?.id && (
-                      <span className="text-slate-300 text-xs font-normal">(you)</span>
+                      <span className="text-faint text-xs font-normal">(you)</span>
                     )}
                     {u.is_disabled && (
                       <span className="text-orange-400/70 text-xs font-normal">● disabled</span>
                     )}
                   </p>
-                  <p className="text-slate-400 text-xs truncate">{u.email}</p>
+                  <p className="text-muted text-xs truncate">{u.email}</p>
                 </button>
 
                 {/* Role badge → opens picker */}
@@ -305,7 +305,7 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
                 {/* Expand */}
                 <button
                   onClick={() => onExpand(u.id)}
-                  className="text-slate-300 hover:text-slate-900 transition-colors"
+                  className="text-faint hover:text-primary transition-colors"
                 >
                   {expandedId === u.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                 </button>
@@ -313,15 +313,15 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
 
               {/* Expanded: portfolio + watchlist */}
               {expandedId === u.id && (
-                <div className="px-5 pb-4 pt-1 bg-surface/50 border-t border-slate-200 grid grid-cols-2 gap-6">
+                <div className="px-5 pb-4 pt-1 bg-surface/50 border-t border-border grid grid-cols-2 gap-6">
                   <div>
-                    <p className="text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">
+                    <p className="text-muted text-xs font-medium mb-2 uppercase tracking-wider">
                       Portfolio
                     </p>
                     {!expandedData[u.id] ? (
-                      <p className="text-slate-300 text-xs">Loading…</p>
+                      <p className="text-faint text-xs">Loading…</p>
                     ) : expandedData[u.id].portfolio.length === 0 ? (
-                      <p className="text-slate-300 text-xs">No holdings</p>
+                      <p className="text-faint text-xs">No holdings</p>
                     ) : (
                       <div className="space-y-1">
                         {expandedData[u.id].portfolio.map(h => (
@@ -329,7 +329,7 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
                             <span className="text-accent-blue font-mono font-semibold">
                               {h.symbol}
                             </span>
-                            <span className="text-slate-500">
+                            <span className="text-muted">
                               {h.shares} shares @ ${h.avgCost}
                             </span>
                           </div>
@@ -339,13 +339,13 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
                   </div>
 
                   <div>
-                    <p className="text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">
+                    <p className="text-muted text-xs font-medium mb-2 uppercase tracking-wider">
                       Watchlist
                     </p>
                     {!expandedData[u.id] ? (
-                      <p className="text-slate-300 text-xs">Loading…</p>
+                      <p className="text-faint text-xs">Loading…</p>
                     ) : expandedData[u.id].watchlist.length === 0 ? (
-                      <p className="text-slate-300 text-xs">Empty</p>
+                      <p className="text-faint text-xs">Empty</p>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
                         {expandedData[u.id].watchlist.map(s => (
@@ -374,7 +374,7 @@ function UsersTab({ users, loading, me, busy, onRoleChange, onToggleDisable, onE
 function PermissionsTab() {
   return (
     <div className="space-y-5">
-      <p className="text-slate-400 text-sm">
+      <p className="text-muted text-sm">
         Read-only reference showing what each role can do. Use the Users tab to change roles.
       </p>
 
@@ -385,18 +385,18 @@ function PermissionsTab() {
           return (
             <div key={role} className={clsx('rounded-xl border p-4', meta.bg, meta.border)}>
               <span className={clsx('text-sm font-semibold', meta.color)}>{role}</span>
-              <p className="text-slate-400 text-xs mt-1 leading-relaxed">{meta.description}</p>
+              <p className="text-muted text-xs mt-1 leading-relaxed">{meta.description}</p>
             </div>
           )
         })}
       </div>
 
       {/* Matrix */}
-      <div className="bg-surface-card border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
 
         {/* Column headers */}
-        <div className="grid grid-cols-[1fr_repeat(4,_90px)] px-5 py-3 border-b border-slate-200 bg-surface/50">
-          <span className="text-slate-400 text-xs font-medium uppercase tracking-wider">
+        <div className="grid grid-cols-[1fr_repeat(4,_90px)] px-5 py-3 border-b border-border bg-surface/50">
+          <span className="text-muted text-xs font-medium uppercase tracking-wider">
             Permission
           </span>
           {ROLES.map(r => (
@@ -416,15 +416,15 @@ function PermissionsTab() {
             className={clsx(
               'grid grid-cols-[1fr_repeat(4,_90px)] px-5 py-3 items-center transition-colors',
               'hover:bg-surface-hover',
-              idx % 2 === 1 && 'bg-slate-50',
+              idx % 2 === 1 && 'bg-surface/50',
             )}
           >
-            <span className="text-slate-600 text-sm">{perm.label}</span>
+            <span className="text-secondary text-sm">{perm.label}</span>
             {ROLES.map(r => (
               <div key={r} className="flex justify-center">
                 {perm.roles.includes(r)
                   ? <Check size={15} className="text-green-400" />
-                  : <X    size={15} className="text-slate-300" />
+                  : <X    size={15} className="text-faint" />
                 }
               </div>
             ))}
@@ -433,7 +433,7 @@ function PermissionsTab() {
       </div>
 
       {/* Role hierarchy note */}
-      <div className="flex items-center gap-2 text-slate-400 text-xs">
+      <div className="flex items-center gap-2 text-muted text-xs">
         <Shield size={11} />
         Role hierarchy (highest → lowest): admin → premium → user → readonly
       </div>
@@ -445,24 +445,24 @@ function PermissionsTab() {
 
 const ACTION_META = {
   login:            { label: 'Login',              color: 'text-accent-blue  bg-accent-blue/10  border-accent-blue/20'  },
-  logout:           { label: 'Logout',             color: 'text-slate-400     bg-slate-100          border-slate-200'        },
+  logout:           { label: 'Logout',             color: 'text-muted     bg-surface-hover          border-border'        },
   signup:           { label: 'Signed Up',          color: 'text-green-400    bg-green-400/10     border-green-400/20'    },
   buy:              { label: 'Buy',                color: 'text-gain         bg-gain/10          border-gain/20'         },
   add_holding:      { label: 'Add Holding',        color: 'text-gain         bg-gain/10          border-gain/20'         },
   sell:             { label: 'Sell',               color: 'text-loss         bg-loss/10          border-loss/20'         },
-  remove_holding:   { label: 'Remove Holding',     color: 'text-slate-500     bg-slate-100          border-slate-200'        },
+  remove_holding:   { label: 'Remove Holding',     color: 'text-muted     bg-surface-hover          border-border'        },
   add_watchlist:    { label: 'Watch +',            color: 'text-yellow-400   bg-yellow-400/10    border-yellow-400/20'   },
-  remove_watchlist: { label: 'Watch −',            color: 'text-slate-400     bg-slate-100          border-slate-200'        },
+  remove_watchlist: { label: 'Watch −',            color: 'text-muted     bg-surface-hover          border-border'        },
   agent_buy:        { label: 'Agent Buy',          color: 'text-gain         bg-gain/10          border-gain/20'         },
   agent_sell:       { label: 'Agent Sell',         color: 'text-loss         bg-loss/10          border-loss/20'         },
-  agent_remove:     { label: 'Agent Remove',       color: 'text-slate-500     bg-slate-100          border-slate-200'        },
+  agent_remove:     { label: 'Agent Remove',       color: 'text-muted     bg-surface-hover          border-border'        },
   role_changed:     { label: 'Role Changed',       color: 'text-orange-400   bg-orange-400/10    border-orange-400/20'   },
   account_disabled: { label: 'Account Disabled',  color: 'text-loss         bg-loss/10          border-loss/20'         },
   account_enabled:  { label: 'Account Enabled',   color: 'text-gain         bg-gain/10          border-gain/20'         },
 }
 
 function ActionBadge({ action }) {
-  const meta = ACTION_META[action] ?? { label: action, color: 'text-slate-400 bg-slate-100 border-slate-200' }
+  const meta = ACTION_META[action] ?? { label: action, color: 'text-muted bg-surface-hover border-border' }
   return (
     <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium whitespace-nowrap', meta.color)}>
       {meta.label}
@@ -516,7 +516,7 @@ function AuditTab({ users }) {
         <select
           value={filterUser}
           onChange={e => setFilterUser(e.target.value)}
-          className="text-xs bg-surface-hover border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 outline-none"
+          className="text-xs bg-surface-hover border border-border text-secondary rounded-lg px-3 py-1.5 outline-none"
         >
           <option value="">All users</option>
           {users.map(u => (
@@ -527,7 +527,7 @@ function AuditTab({ users }) {
         <select
           value={filterAction}
           onChange={e => setFilterAction(e.target.value)}
-          className="text-xs bg-surface-hover border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 outline-none"
+          className="text-xs bg-surface-hover border border-border text-secondary rounded-lg px-3 py-1.5 outline-none"
         >
           <option value="">All actions</option>
           {allActions.map(a => (
@@ -536,21 +536,21 @@ function AuditTab({ users }) {
         </select>
 
         <button onClick={load}
-          className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 text-xs transition-colors ml-auto">
+          className="flex items-center gap-1.5 text-muted hover:text-primary text-xs transition-colors ml-auto">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
 
       {/* Table */}
       {loading ? (
-        <div className="text-slate-400 text-sm text-center py-12">Loading audit log…</div>
+        <div className="text-muted text-sm text-center py-12">Loading audit log…</div>
       ) : entries.length === 0 ? (
-        <div className="text-slate-300 text-sm text-center py-12">No entries found</div>
+        <div className="text-faint text-sm text-center py-12">No entries found</div>
       ) : (
-        <div className="bg-surface-card border border-slate-200 rounded-xl overflow-hidden">
+        <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 text-slate-400">
+              <tr className="border-b border-border text-muted">
                 <th className="text-left px-4 py-3 font-medium">Time</th>
                 <th className="text-left px-4 py-3 font-medium">User</th>
                 <th className="text-left px-4 py-3 font-medium">Action</th>
@@ -561,32 +561,32 @@ function AuditTab({ users }) {
             <tbody>
               {entries.map((e, i) => (
                 <tr key={e.id}
-                  className={clsx('border-t border-slate-200 hover:bg-surface-hover transition-colors',
-                    i % 2 === 1 && 'bg-slate-50')}>
-                  <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+                  className={clsx('border-t border-border hover:bg-surface-hover transition-colors',
+                    i % 2 === 1 && 'bg-surface/50')}>
+                  <td className="px-4 py-2.5 text-muted whitespace-nowrap">
                     {new Date(e.created_at).toLocaleString([], {
                       month: 'short', day: 'numeric',
                       hour: '2-digit', minute: '2-digit'
                     })}
                   </td>
                   <td className="px-4 py-2.5 min-w-0">
-                    <p className="text-slate-600 truncate max-w-[140px]">{e.user_name ?? '—'}</p>
-                    <p className="text-slate-400 truncate max-w-[140px]">{e.user_email ?? e.user_id}</p>
+                    <p className="text-secondary truncate max-w-[140px]">{e.user_name ?? '—'}</p>
+                    <p className="text-muted truncate max-w-[140px]">{e.user_email ?? e.user_id}</p>
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap">
                     <ActionBadge action={e.action} />
                   </td>
-                  <td className="px-4 py-2.5 text-slate-500 max-w-[200px] truncate">
+                  <td className="px-4 py-2.5 text-muted max-w-[200px] truncate">
                     {formatDetails(e.action, e.details) ?? '—'}
                   </td>
-                  <td className="px-4 py-2.5 text-slate-300 hidden lg:table-cell font-mono">
+                  <td className="px-4 py-2.5 text-faint hidden lg:table-cell font-mono">
                     {e.ip ?? '—'}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="px-4 py-2 border-t border-slate-200 text-slate-300 text-xs">
+          <div className="px-4 py-2 border-t border-border text-faint text-xs">
             Showing {entries.length} most recent entries
           </div>
         </div>
@@ -677,14 +677,14 @@ export default function AdminPanel() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Shield size={16} className="text-orange-400" />
-          <h2 className="text-slate-900 font-semibold">Admin Panel</h2>
+          <h2 className="text-primary font-semibold">Admin Panel</h2>
           {!loading && (
-            <span className="text-slate-400 text-sm">— {users.length} users</span>
+            <span className="text-muted text-sm">— {users.length} users</span>
           )}
         </div>
         <button
           onClick={loadUsers}
-          className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 text-xs transition-colors"
+          className="flex items-center gap-1.5 text-muted hover:text-primary text-xs transition-colors"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -699,8 +699,8 @@ export default function AdminPanel() {
             className={clsx(
               'flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-colors',
               activeTab === key
-                ? 'bg-surface-card text-slate-900 shadow-sm'
-                : 'text-slate-400 hover:text-slate-900'
+                ? 'bg-surface-card text-primary shadow-sm'
+                : 'text-muted hover:text-primary'
             )}
           >
             <Icon size={13} />

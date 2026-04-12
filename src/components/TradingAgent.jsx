@@ -28,7 +28,7 @@ function TradeBadge({ trade }) {
   const config = {
     buy:    { label: `Bought ${trade.shares} × ${trade.symbol}`,   color: 'text-gain  bg-gain/10  border-gain/20',  Icon: TrendingUp  },
     sell:   { label: `Sold ${trade.shares ?? '?'} × ${trade.symbol}`, color: 'text-loss  bg-loss/10  border-loss/20',  Icon: TrendingDown },
-    remove: { label: `Removed ${trade.symbol}`,                    color: 'text-slate-500 bg-slate-100 border-slate-200', Icon: Trash2       },
+    remove: { label: `Removed ${trade.symbol}`,                    color: 'text-muted bg-surface-hover border-border', Icon: Trash2       },
   }[trade.action] ?? null
 
   if (!config) return null
@@ -180,10 +180,10 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                 <div className={clsx(
                   'text-sm px-3 py-2 rounded-xl leading-relaxed',
                   m.role === 'user'
-                    ? 'bg-accent-blue/20 text-slate-900 rounded-tr-sm'
+                    ? 'bg-accent-blue/20 text-primary rounded-tr-sm'
                     : m.error
                       ? 'bg-loss/10 text-loss/80 border border-loss/20 rounded-tl-sm'
-                      : 'bg-surface-hover text-slate-700 rounded-tl-sm',
+                      : 'bg-surface-hover text-secondary rounded-tl-sm',
                 )}>
                   {m.text}
                 </div>
@@ -217,8 +217,8 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
         )}
 
         {/* Input */}
-        <div className="px-4 pb-4 pt-2 border-t border-slate-200 shrink-0">
-          <div className="flex items-center gap-2 bg-surface-hover border border-slate-200 rounded-xl px-3 py-2.5 focus-within:border-accent-blue/40 transition-colors">
+        <div className="px-4 pb-4 pt-2 border-t border-border shrink-0">
+          <div className="flex items-center gap-2 bg-surface-hover border border-border rounded-xl px-3 py-2.5 focus-within:border-accent-blue/40 transition-colors">
             <input
               ref={inputRef}
               type="text"
@@ -227,14 +227,14 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
               onKeyDown={handleKeyDown}
               placeholder='"buy 10 AAPL at 195" or "sell half TSLA"'
               disabled={loading}
-              className="flex-1 bg-transparent text-slate-900 text-sm placeholder-slate-400 outline-none disabled:opacity-50"
+              className="flex-1 bg-transparent text-primary text-sm placeholder-muted outline-none disabled:opacity-50"
             />
             <button onClick={() => send()} disabled={!input.trim() || loading}
-              className="text-accent-blue disabled:text-slate-300 hover:text-accent-blue/70 transition-colors shrink-0">
+              className="text-accent-blue disabled:text-faint hover:text-accent-blue/70 transition-colors shrink-0">
               <Send size={15} />
             </button>
           </div>
-          <p className="text-slate-300 text-xs mt-1.5 px-1">
+          <p className="text-faint text-xs mt-1.5 px-1">
             Paper trading only · Not financial advice
           </p>
         </div>
@@ -244,7 +244,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
 
   // ── Standalone card mode (legacy, kept for backward compat) ─────
   return (
-    <div className="bg-surface-card border border-slate-200 rounded-xl overflow-hidden">
+    <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
 
       {/* Header / toggle */}
       <button
@@ -253,14 +253,14 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
       >
         <div className="flex items-center gap-2">
           <Sparkles size={14} className="text-accent-blue" />
-          <span className="text-slate-900 text-sm font-semibold">Trading Agent</span>
-          <span className="text-slate-400 text-xs">— ask Claude to execute trades</span>
+          <span className="text-primary text-sm font-semibold">Trading Agent</span>
+          <span className="text-muted text-xs">— ask Claude to execute trades</span>
         </div>
-        {open ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+        {open ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
       </button>
 
       {open && (
-        <div className="border-t border-slate-200">
+        <div className="border-t border-border">
 
           {/* Message list */}
           <div className="h-64 overflow-y-auto px-4 py-3 space-y-3">
@@ -281,10 +281,10 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                   <div className={clsx(
                     'text-sm px-3 py-2 rounded-xl leading-relaxed',
                     m.role === 'user'
-                      ? 'bg-accent-blue/20 text-slate-900 rounded-tr-sm'
+                      ? 'bg-accent-blue/20 text-primary rounded-tr-sm'
                       : m.error
                         ? 'bg-loss/10 text-loss/80 border border-loss/20 rounded-tl-sm'
-                        : 'bg-surface-hover text-slate-700 rounded-tl-sm',
+                        : 'bg-surface-hover text-secondary rounded-tl-sm',
                   )}>
                     {m.text}
                   </div>
@@ -325,7 +325,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
 
           {/* Input row */}
           <div className="px-4 pb-4 pt-1">
-            <div className="flex items-center gap-2 bg-surface-hover border border-slate-200 rounded-xl px-3 py-2 focus-within:border-accent-blue/40 transition-colors">
+            <div className="flex items-center gap-2 bg-surface-hover border border-border rounded-xl px-3 py-2 focus-within:border-accent-blue/40 transition-colors">
               <input
                 ref={inputRef}
                 type="text"
@@ -334,17 +334,17 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                 onKeyDown={handleKeyDown}
                 placeholder='e.g. "buy 10 AAPL at 195" or "sell half my TSLA"'
                 disabled={loading}
-                className="flex-1 bg-transparent text-slate-900 text-sm placeholder-slate-400 outline-none disabled:opacity-50"
+                className="flex-1 bg-transparent text-primary text-sm placeholder-muted outline-none disabled:opacity-50"
               />
               <button
                 onClick={() => send()}
                 disabled={!input.trim() || loading}
-                className="text-accent-blue disabled:text-slate-300 hover:text-accent-blue/70 transition-colors shrink-0"
+                className="text-accent-blue disabled:text-faint hover:text-accent-blue/70 transition-colors shrink-0"
               >
                 <Send size={15} />
               </button>
             </div>
-            <p className="text-slate-300 text-xs mt-1.5 px-1">
+            <p className="text-faint text-xs mt-1.5 px-1">
               Powered by Claude · Trades are paper only · Not financial advice
             </p>
           </div>

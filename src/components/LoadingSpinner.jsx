@@ -10,7 +10,7 @@ export function LoadingSpinner({ message = 'Fetching live data…' }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-3">
       <Loader2 size={28} className="text-accent-blue animate-spin" />
-      <p className="text-slate-400 text-sm">{message}</p>
+      <p className="text-muted text-sm">{message}</p>
     </div>
   )
 }
@@ -23,10 +23,10 @@ export function ErrorMessage({ error }) {
       <AlertCircle size={18} className="text-loss shrink-0 mt-0.5" />
       <div>
         <p className="text-loss font-medium text-sm">Failed to load data</p>
-        <p className="text-slate-400 text-xs mt-1 font-mono">{msg}</p>
+        <p className="text-muted text-xs mt-1 font-mono">{msg}</p>
         {msg.includes('VITE_POLYGON_API_KEY') && (
-          <p className="text-slate-400 text-xs mt-2">
-            👉 Make sure you've created a <code className="bg-slate-100 px-1 rounded">.env</code> file
+          <p className="text-muted text-xs mt-2">
+            👉 Make sure you've created a <code className="bg-surface-hover px-1 rounded">.env</code> file
             with your Polygon API key. See <strong>SETUP.md</strong> for instructions.
           </p>
         )}

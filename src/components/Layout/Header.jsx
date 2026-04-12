@@ -5,9 +5,10 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { Search, X, Loader2, Bot } from 'lucide-react'
+import { Search, X, Loader2, Bot, Sun, Moon } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
+import { useTheme } from '../../context/ThemeContext'
 import { searchTickers } from '../../services/polygonApi'
 import UserMenu from '../UserMenu'
 
@@ -25,6 +26,7 @@ const DEBOUNCE_MS = 300
 export default function Header({ agentOpen, onToggleAgent }) {
   const { state, dispatch } = useApp()
   const { canTrade } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const [query,     setQuery]     = useState('')
   const [results,   setResults]   = useState([])
   const [loading,   setLoading]   = useState(false)
@@ -78,7 +80,7 @@ export default function Header({ agentOpen, onToggleAgent }) {
   }
 
   return (
-    <header className="h-16 px-6 bg-surface-card border-b border-slate-200 flex items-center justify-between">
+    <header className="h-16 px-6 bg-surface-card border-b border-border flex items-center justify-between">
       {/* Logo + Page title */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
@@ -87,12 +89,12 @@ export default function Header({ agentOpen, onToggleAgent }) {
             alt="TradeBuddy logo"
             className="h-8 w-8 rounded-lg object-cover"
           />
-          <span className="text-slate-900 font-bold text-sm tracking-tight">TradeBuddy</span>
+          <span className="text-primary font-bold text-sm tracking-tight">TradeBuddy</span>
         </div>
 
-        <div className="w-px h-5 bg-slate-100" />
+        <div className="w-px h-5 bg-surface-hover" />
 
-        <h1 className="text-slate-600 font-medium text-sm">
+        <h1 className="text-secondary font-medium text-sm">
           {state.currentPage === 'stock' && state.selectedStock
             ? state.selectedStock
             : PAGE_TITLES[state.currentPage]}
@@ -104,8 +106,8 @@ export default function Header({ agentOpen, onToggleAgent }) {
       <div className="relative w-72">
         <div className="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
           {loading
-            ? <Loader2 size={15} className="text-slate-400 shrink-0 animate-spin" />
-            : <Search  size={15} className="text-slate-400 shrink-0" />
+            ? <Loader2 size={15} className="text-muted shrink-0 animate-spin" />
+            : <Search  size={15} className="text-muted shrink-0" />
           }
           <input
             ref={inputRef}
@@ -115,11 +117,11 @@ export default function Header({ agentOpen, onToggleAgent }) {
             onChange={e => setQuery(e.target.value)}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            className="bg-transparent text-sm text-slate-900 placeholder-slate-400 outline-none w-full"
+            className="bg-transparent text-sm text-primary placeholder-muted outline-none w-full"
           />
           {query && (
             <button onMouseDown={e => { e.preventDefault(); handleClear() }}>
-              <X size={13} className="text-slate-400 hover:text-slate-900" />
+              <X size={13} className="text-muted hover:text-primary" />
             </button>
           )}
         </div>
@@ -129,10 +131,10 @@ export default function Header({ agentOpen, onToggleAgent }) {
         {showDropdown && (
           <ul
             onMouseDown={e => e.preventDefault()}
-            className="absolute top-full mt-1 w-full bg-surface-card border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden"
+            className="absolute top-full mt-1 w-full bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden"
           >
             {loading && results.length === 0 ? (
-              <li className="px-4 py-3 text-slate-400 text-sm">Searching…</li>
+              <li className="px-4 py-3 text-muted text-sm">Searching…</li>
             ) : (
               results.map(stock => (
                 <li key={stock.symbol}>
@@ -143,9 +145,9 @@ export default function Header({ agentOpen, onToggleAgent }) {
                     <span className="text-accent-blue font-mono text-sm font-semibold w-16 shrink-0">
                       {stock.symbol}
                     </span>
-                    <span className="text-slate-500 text-sm truncate">{stock.name}</span>
+                    <span className="text-muted text-sm truncate">{stock.name}</span>
                     {stock.type && stock.type !== 'CS' && (
-                      <span className="ml-auto text-slate-300 text-xs shrink-0">{stock.type}</span>
+                      <span className="ml-auto text-faint text-xs shrink-0">{stock.type}</span>
                     )}
                   </button>
                 </li>
@@ -164,7 +166,7 @@ export default function Header({ agentOpen, onToggleAgent }) {
             relative p-2 rounded-lg transition-colors
             ${agentOpen
               ? 'bg-accent-blue/20 text-accent-blue'
-              : 'text-slate-400 hover:text-slate-900 hover:bg-surface-hover'}
+              : 'text-muted hover:text-primary hover:bg-surface-hover'}
           `}
         >
           <Bot size={18} />
@@ -174,6 +176,15 @@ export default function Header({ agentOpen, onToggleAgent }) {
           )}
         </button>
       )}
+
+      {/* Light / dark toggle */}
+      <button
+        onClick={toggleTheme}
+        title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        className="p-2 rounded-lg text-muted hover:text-primary hover:bg-surface-hover transition-colors"
+      >
+        {isDark ? <Sun size={17} /> : <Moon size={17} />}
+      </button>
 
       <UserMenu />
       </div>{/* end search + user */}

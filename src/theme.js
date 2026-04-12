@@ -1,82 +1,70 @@
 /**
- * theme.js — Single source of truth for TradeBuddy's look & feel.
+ * theme.js — Single source of truth for TradeBuddy's color tokens.
  *
- * USAGE
- * ─────
- * • tailwind.config.js  imports `colors` to wire up Tailwind utility classes
- *   (bg-surface, text-gain, border-accent-blue, etc.)
+ * HOW IT WORKS
+ * ────────────
+ * Actual color values live as CSS custom properties in index.css.
+ * Switching from light → dark simply sets data-theme="dark" on <html>,
+ * which swaps the variable values — Tailwind utility classes re-render
+ * automatically with zero component changes.
  *
- * • Components that need raw hex values (recharts, inline styles) can import
- *   `chart` or `pieColors` directly:
+ * WHAT LIVES HERE
+ * ───────────────
+ * • `colors`      → passed to tailwind.config.js so bg-surface, text-primary, etc. work
+ * • `THEMES`      → raw hex values consumed by ThemeContext for recharts inline props
+ *                   (recharts can't use CSS variables, so it needs real hex at render time)
  *
- *     import { chart, pieColors } from '../theme'
- *
- * Changing a color here automatically propagates everywhere in the app.
+ * TO RESTYLE
+ * ──────────
+ * Edit the CSS variables in src/index.css.
+ * Change the matching hex values in THEMES below so charts stay in sync.
  */
 
-// ── Surface palette ──────────────────────────────────────────────────────────
-// Controls page background, card/panel backgrounds, and hover states.
-const surface = {
-  DEFAULT: '#f8fafc',   // near-white page canvas
-  card:    '#ffffff',   // card & panel background
-  hover:   '#f1f5f9',   // subtle hover / input fill
-}
-
-// ── Accent colors ────────────────────────────────────────────────────────────
-const accent = {
-  blue:   '#2563eb',    // primary CTA — blue-600
-  purple: '#7c3aed',    // secondary highlight — violet-600
-}
-
-// ── Semantic gain / loss ─────────────────────────────────────────────────────
-const gain = '#16a34a'  // green-700
-const loss = '#dc2626'  // red-600
-
-// ── Text shades ──────────────────────────────────────────────────────────────
-// These aren't wired into Tailwind (use slate-XXX utilities instead), but are
-// exported so recharts and inline styles can stay in sync.
-export const text = {
-  primary:   '#0f172a',   // slate-900
-  secondary: '#475569',   // slate-600
-  muted:     '#94a3b8',   // slate-400
-  faint:     '#cbd5e1',   // slate-300
-}
-
-// ── Border shades ────────────────────────────────────────────────────────────
-export const border = {
-  DEFAULT: '#e2e8f0',   // slate-200
-  strong:  '#cbd5e1',   // slate-300
-}
-
-// ── Chart tokens (for recharts inline props) ─────────────────────────────────
-export const chart = {
-  grid:      '#e2e8f0',   // CartesianGrid stroke
-  axis:      '#94a3b8',   // XAxis / YAxis tick fill
-  reference: '#cbd5e1',   // ReferenceLine stroke
-  tooltip: {
-    bg:     '#ffffff',
-    border: '#e2e8f0',
-    text:   '#0f172a',
-  },
-}
-
-// ── Pie / donut chart color palette ─────────────────────────────────────────
-export const pieColors = [
-  '#2563eb',  // blue-600
-  '#7c3aed',  // violet-600
-  '#16a34a',  // green-700
-  '#f59e0b',  // amber-400
-  '#ec4899',  // pink-500
-  '#06b6d4',  // cyan-500
-  '#f97316',  // orange-500
-  '#8b5cf6',  // violet-500
-]
-
-// ── Tailwind color map (consumed by tailwind.config.js) ─────────────────────
-// Keep all token names in sync with the Tailwind class names used in the app.
+// ── Tailwind color map (CSS variable references) ─────────────────────────────
+// <alpha-value> is replaced by Tailwind when you use opacity modifiers
+// e.g. bg-surface/50, text-primary/60, border-border/30 all work.
 export const colors = {
-  surface,
-  accent,
-  gain,
-  loss,
+  surface: {
+    DEFAULT: 'rgb(var(--surface)       / <alpha-value>)',
+    card:    'rgb(var(--surface-card)  / <alpha-value>)',
+    hover:   'rgb(var(--surface-hover) / <alpha-value>)',
+  },
+  accent: {
+    blue:   'rgb(var(--accent-blue)   / <alpha-value>)',
+    purple: 'rgb(var(--accent-purple) / <alpha-value>)',
+  },
+  gain: 'rgb(var(--gain) / <alpha-value>)',
+  loss: 'rgb(var(--loss) / <alpha-value>)',
+
+  // Text tokens — use text-primary, text-secondary, text-muted, text-faint
+  primary:   'rgb(var(--text-primary)   / <alpha-value>)',
+  secondary: 'rgb(var(--text-secondary) / <alpha-value>)',
+  muted:     'rgb(var(--text-muted)     / <alpha-value>)',
+  faint:     'rgb(var(--text-faint)     / <alpha-value>)',
+
+  // Border token — use border-border
+  border: 'rgb(var(--border) / <alpha-value>)',
+}
+
+// ── Per-theme hex values for recharts inline props ───────────────────────────
+// Keep in sync with the CSS variables in index.css.
+export const THEMES = {
+  light: {
+    chart: {
+      grid:      '#e2e8f0',
+      axis:      '#94a3b8',
+      reference: '#cbd5e1',
+      tooltip:   { bg: '#ffffff', border: '#e2e8f0', text: '#0f172a' },
+    },
+    pieColors: ['#2563eb','#7c3aed','#16a34a','#f59e0b','#ec4899','#06b6d4','#f97316'],
+  },
+  dark: {
+    chart: {
+      grid:      'rgba(255,255,255,0.06)',
+      axis:      'rgba(255,255,255,0.30)',
+      reference: 'rgba(255,255,255,0.12)',
+      tooltip:   { bg: '#272b3d', border: 'rgba(255,255,255,0.08)', text: '#ffffff' },
+    },
+    pieColors: ['#60a5fa','#a78bfa','#4ade80','#fb923c','#f472b6','#34d399','#facc15'],
+  },
 }

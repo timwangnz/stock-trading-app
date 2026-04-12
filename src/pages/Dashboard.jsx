@@ -23,10 +23,10 @@ const SYMBOLS = STOCKS.map(s => s.symbol)
 function StatBadge({ label, value, trend }) {
   const isUp = trend === 'up'
   return (
-    <div className="bg-surface-card border border-slate-200 rounded-xl px-5 py-4 flex-1 min-w-0">
-      <p className="text-slate-400 text-xs mb-1">{label}</p>
+    <div className="bg-surface-card border border-border rounded-xl px-5 py-4 flex-1 min-w-0">
+      <p className="text-muted text-xs mb-1">{label}</p>
       <div className="flex items-center gap-2">
-        <span className="text-slate-900 font-semibold text-lg">{value}</span>
+        <span className="text-primary font-semibold text-lg">{value}</span>
         {trend && (isUp
           ? <ArrowUpRight size={16} className="text-gain" />
           : <ArrowDownRight size={16} className="text-loss" />
@@ -75,23 +75,23 @@ function PortfolioSummary({ onNavigate }) {
   if (portfolio.length === 0) return null
 
   return (
-    <div className="bg-surface-card border border-slate-200 rounded-xl p-5">
+    <div className="bg-surface-card border border-border rounded-xl p-5">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Briefcase size={15} className="text-accent-purple" />
-          <h2 className="text-slate-900 text-sm font-semibold">My Portfolio</h2>
+          <h2 className="text-primary text-sm font-semibold">My Portfolio</h2>
         </div>
         <button
           onClick={() => onNavigate('portfolio')}
-          className="flex items-center gap-1 text-slate-400 hover:text-accent-blue text-xs transition-colors"
+          className="flex items-center gap-1 text-muted hover:text-accent-blue text-xs transition-colors"
         >
           View all <ChevronRight size={13} />
         </button>
       </div>
 
       {loading ? (
-        <p className="text-slate-400 text-xs py-2">Loading prices…</p>
+        <p className="text-muted text-xs py-2">Loading prices…</p>
       ) : (
         <div className="flex gap-6 items-start">
 
@@ -99,8 +99,8 @@ function PortfolioSummary({ onNavigate }) {
           <div className="space-y-3 min-w-0">
             {/* Total value */}
             <div>
-              <p className="text-slate-400 text-xs mb-0.5">Total Value</p>
-              <p className="text-slate-900 font-bold text-2xl">
+              <p className="text-muted text-xs mb-0.5">Total Value</p>
+              <p className="text-primary font-bold text-2xl">
                 ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
@@ -108,14 +108,14 @@ function PortfolioSummary({ onNavigate }) {
             {/* Two-column stats */}
             <div className="flex gap-6">
               <div>
-                <p className="text-slate-400 text-xs mb-0.5">Total Return</p>
+                <p className="text-muted text-xs mb-0.5">Total Return</p>
                 <p className={clsx('font-semibold text-sm', totalGain >= 0 ? 'text-gain' : 'text-loss')}>
                   {totalGain >= 0 ? '+' : ''}${Math.abs(totalGain).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   <span className="text-xs ml-1 opacity-80">({totalGainPct >= 0 ? '+' : ''}{totalGainPct.toFixed(2)}%)</span>
                 </p>
               </div>
               <div>
-                <p className="text-slate-400 text-xs mb-0.5">Today's Change</p>
+                <p className="text-muted text-xs mb-0.5">Today's Change</p>
                 <p className={clsx('font-semibold text-sm', todayGain >= 0 ? 'text-gain' : 'text-loss')}>
                   {todayGain >= 0 ? '+' : ''}${Math.abs(todayGain).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
@@ -124,25 +124,25 @@ function PortfolioSummary({ onNavigate }) {
           </div>
 
           {/* ── Divider ───────────────────────────── */}
-          <div className="w-px self-stretch bg-slate-100 mx-2 shrink-0" />
+          <div className="w-px self-stretch bg-surface-hover mx-2 shrink-0" />
 
           {/* ── Right: top holdings ───────────────── */}
           <div className="flex-1 min-w-0">
-            <p className="text-slate-400 text-xs mb-2">Top Holdings</p>
+            <p className="text-muted text-xs mb-2">Top Holdings</p>
             <div className="space-y-2">
               {topHoldings.map(h => {
                 const allocationPct = totalValue > 0 ? (h.value / totalValue) * 100 : 0
                 return (
                   <div key={h.symbol} className="flex items-center gap-3">
                     {/* Symbol + allocation bar */}
-                    <span className="text-slate-900 font-mono text-xs w-12 shrink-0">{h.symbol}</span>
+                    <span className="text-primary font-mono text-xs w-12 shrink-0">{h.symbol}</span>
                     <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
                       <div
                         className="h-full bg-accent-purple/60 rounded-full"
                         style={{ width: `${allocationPct}%` }}
                       />
                     </div>
-                    <span className="text-slate-400 text-xs w-10 text-right shrink-0">
+                    <span className="text-muted text-xs w-10 text-right shrink-0">
                       {allocationPct.toFixed(0)}%
                     </span>
                     {/* Today's gain for this holding */}
@@ -225,17 +225,17 @@ export default function Dashboard() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Activity size={15} className="text-accent-blue" />
-            <h2 className="text-slate-500 text-sm font-medium">Live Market</h2>
+            <h2 className="text-muted text-sm font-medium">Live Market</h2>
           </div>
           <div className="flex items-center gap-3">
             {lastFetch && (
-              <span className="text-slate-400 text-xs">
+              <span className="text-muted text-xs">
                 Updated {lastFetch.toLocaleTimeString()}
               </span>
             )}
             <button
               onClick={fetchData}
-              className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 text-xs transition-colors"
+              className="flex items-center gap-1.5 text-muted hover:text-primary text-xs transition-colors"
             >
               <RefreshCw size={12} /> Refresh
             </button>
@@ -256,7 +256,7 @@ export default function Dashboard() {
 
       {/* ── Top movers ──────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <h3 className="text-gain text-sm font-semibold mb-3 flex items-center gap-1.5">
             <ArrowUpRight size={15} /> Top Gainers
           </h3>
@@ -265,7 +265,7 @@ export default function Dashboard() {
               <div key={s.symbol} className="flex justify-between items-center">
                 <button
                   onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: s.symbol })}
-                  className="text-slate-900 font-mono text-sm hover:text-accent-blue transition-colors"
+                  className="text-primary font-mono text-sm hover:text-accent-blue transition-colors"
                 >
                   {s.symbol}
                 </button>
@@ -275,7 +275,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-surface-card border border-slate-200 rounded-xl p-4">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
           <h3 className="text-loss text-sm font-semibold mb-3 flex items-center gap-1.5">
             <ArrowDownRight size={15} /> Top Losers
           </h3>
@@ -284,7 +284,7 @@ export default function Dashboard() {
               <div key={s.symbol} className="flex justify-between items-center">
                 <button
                   onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: s.symbol })}
-                  className="text-slate-900 font-mono text-sm hover:text-accent-blue transition-colors"
+                  className="text-primary font-mono text-sm hover:text-accent-blue transition-colors"
                 >
                   {s.symbol}
                 </button>
@@ -297,7 +297,7 @@ export default function Dashboard() {
 
       {/* ── All stocks grid ──────────────────────────── */}
       <div>
-        <h2 className="text-slate-500 text-sm font-medium mb-3">All Stocks</h2>
+        <h2 className="text-muted text-sm font-medium mb-3">All Stocks</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {stocks.map(stock => (
             <StockCard key={stock.symbol} stockInfo={stock} />

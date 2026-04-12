@@ -8,7 +8,9 @@ export default {
   ],
   theme: {
     extend: {
-      // All color tokens live in src/theme.js — edit there to restyle the app.
+      // All color tokens live in src/theme.js.
+      // Actual values are CSS variables defined in src/index.css.
+      // Change the CSS variables there to restyle the app; no recompile needed.
       colors,
     },
   },

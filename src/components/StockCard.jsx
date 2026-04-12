@@ -17,11 +17,11 @@ export default function StockCard({ stockInfo }) {
   return (
     <button
       onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: symbol })}
-      className="bg-surface-card hover:bg-surface-hover border border-slate-200 hover:border-slate-200 rounded-xl p-4 text-left transition-all group w-full"
+      className="bg-surface-card hover:bg-surface-hover border border-border hover:border-border rounded-xl p-4 text-left transition-all group w-full"
     >
       {/* Top row: symbol + trend icon */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-slate-900 font-mono font-bold text-base">{symbol}</span>
+        <span className="text-primary font-mono font-bold text-base">{symbol}</span>
         {isPositive
           ? <TrendingUp size={16} className="text-gain" />
           : <TrendingDown size={16} className="text-loss" />
@@ -29,10 +29,10 @@ export default function StockCard({ stockInfo }) {
       </div>
 
       {/* Company name */}
-      <p className="text-slate-400 text-xs mb-3 truncate">{name}</p>
+      <p className="text-muted text-xs mb-3 truncate">{name}</p>
 
       {/* Price */}
-      <p className="text-slate-900 font-semibold text-xl mb-1">
+      <p className="text-primary font-semibold text-xl mb-1">
         ${price.toFixed(2)}
       </p>
 

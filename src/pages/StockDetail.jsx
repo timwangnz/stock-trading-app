@@ -18,7 +18,7 @@ import { Star, ArrowLeft, PlusCircle, ExternalLink } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
 import { STOCKS } from '../data/mockData'
-import { chart as chartTheme } from '../theme'
+import { useTheme } from '../context/ThemeContext'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
 import clsx from 'clsx'
 
@@ -33,16 +33,17 @@ function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   const d = payload[0].payload
   return (
-    <div className="bg-surface-card border border-slate-200 rounded-lg px-3 py-2 text-xs shadow-xl">
-      <p className="text-slate-500 mb-1">{label}</p>
-      <p className="text-slate-900 font-semibold">${d.close.toFixed(2)}</p>
-      <p className="text-slate-400">Vol: {(d.volume / 1_000_000).toFixed(1)}M</p>
+    <div className="bg-surface-card border border-border rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="text-muted mb-1">{label}</p>
+      <p className="text-primary font-semibold">${d.close.toFixed(2)}</p>
+      <p className="text-muted">Vol: {(d.volume / 1_000_000).toFixed(1)}M</p>
     </div>
   )
 }
 
 export default function StockDetail() {
   const { state, dispatch } = useApp()
+  const { chart: chartTheme } = useTheme()
   const symbol = state.selectedStock
 
   const [range,       setRange]       = useState('3M')
@@ -138,7 +139,7 @@ export default function StockDetail() {
       {/* ── Back button ──────────────────────────────── */}
       <button
         onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'dashboard' })}
-        className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 text-sm transition-colors"
+        className="flex items-center gap-1.5 text-muted hover:text-primary text-sm transition-colors"
       >
         <ArrowLeft size={15} /> Back to Market
       </button>
@@ -151,26 +152,26 @@ export default function StockDetail() {
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-baseline gap-3">
-                <h2 className="text-slate-900 font-bold text-3xl font-mono">{symbol}</h2>
-                <span className="text-slate-500 text-base">{name}</span>
+                <h2 className="text-primary font-bold text-3xl font-mono">{symbol}</h2>
+                <span className="text-muted text-base">{name}</span>
                 {details?.homepageUrl && (
                   <a
                     href={details.homepageUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-slate-400 hover:text-accent-blue transition-colors"
+                    className="text-muted hover:text-accent-blue transition-colors"
                   >
                     <ExternalLink size={13} />
                   </a>
                 )}
               </div>
               <div className="flex items-baseline gap-3 mt-2">
-                <span className="text-slate-900 font-semibold text-4xl">${price.toFixed(2)}</span>
+                <span className="text-primary font-semibold text-4xl">${price.toFixed(2)}</span>
                 <span className={clsx('text-lg font-medium', change >= 0 ? 'text-gain' : 'text-loss')}>
                   {change >= 0 ? '+' : ''}{change.toFixed(2)} ({changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%)
                 </span>
               </div>
-              <p className="text-slate-400 text-xs mt-1">Sector: {sector}</p>
+              <p className="text-muted text-xs mt-1">Sector: {sector}</p>
             </div>
 
             <div className="flex gap-2">
@@ -180,7 +181,7 @@ export default function StockDetail() {
                   'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
                   isWatched
                     ? 'border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/10'
-                    : 'border-slate-200 text-slate-500 hover:text-yellow-400 hover:border-yellow-400/40'
+                    : 'border-border text-muted hover:text-yellow-400 hover:border-yellow-400/40'
                 )}
               >
                 <Star size={14} className={clsx(isWatched && 'fill-yellow-400')} />
@@ -199,26 +200,26 @@ export default function StockDetail() {
           {showAddForm && (
             <form
               onSubmit={handleAddToPortfolio}
-              className="bg-surface-card border border-slate-200 rounded-xl p-4 flex items-center gap-3"
+              className="bg-surface-card border border-border rounded-xl p-4 flex items-center gap-3"
             >
-              <p className="text-slate-500 text-sm shrink-0">
-                Buy at <span className="text-slate-900 font-medium">${price.toFixed(2)}</span>
+              <p className="text-muted text-sm shrink-0">
+                Buy at <span className="text-primary font-medium">${price.toFixed(2)}</span>
               </p>
               <input
                 type="number" min="0.001" step="any" placeholder="Number of shares"
                 value={shares} onChange={e => setShares(e.target.value)}
-                className="flex-1 bg-surface-hover text-slate-900 text-sm rounded-lg px-3 py-2 outline-none border border-slate-200"
+                className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
                 required
               />
               {shares && !isNaN(parseFloat(shares)) && (
-                <p className="text-slate-400 text-sm shrink-0">
+                <p className="text-muted text-sm shrink-0">
                   = ${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               )}
               <button type="submit" className="bg-accent-blue hover:bg-accent-blue/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
                 Confirm
               </button>
-              <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-900 text-sm shrink-0">✕</button>
+              <button type="button" onClick={() => setShowAddForm(false)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
             </form>
           )}
 
@@ -230,27 +231,27 @@ export default function StockDetail() {
               { label: 'Volume',       value: snapshot?.volume ? `${(snapshot.volume / 1_000_000).toFixed(1)}M` : '—' },
               { label: 'Prev Close',   value: snapshot?.prevClose ? `$${snapshot.prevClose.toFixed(2)}` : '—' },
             ].map(stat => (
-              <div key={stat.label} className="bg-surface-card border border-slate-200 rounded-xl px-4 py-3">
-                <p className="text-slate-400 text-xs mb-1">{stat.label}</p>
-                <p className="text-slate-900 font-medium text-sm">{stat.value}</p>
+              <div key={stat.label} className="bg-surface-card border border-border rounded-xl px-4 py-3">
+                <p className="text-muted text-xs mb-1">{stat.label}</p>
+                <p className="text-primary font-medium text-sm">{stat.value}</p>
               </div>
             ))}
           </div>
 
           {/* Company description */}
           {details?.description && (
-            <div className="bg-surface-card border border-slate-200 rounded-xl px-5 py-4">
-              <p className="text-slate-400 text-xs mb-2">About</p>
-              <p className="text-slate-500 text-sm leading-relaxed line-clamp-3">{details.description}</p>
+            <div className="bg-surface-card border border-border rounded-xl px-5 py-4">
+              <p className="text-muted text-xs mb-2">About</p>
+              <p className="text-muted text-sm leading-relaxed line-clamp-3">{details.description}</p>
             </div>
           )}
         </>
       )}
 
       {/* ── Price chart ───────────────────────────────── */}
-      <div className="bg-surface-card border border-slate-200 rounded-xl p-5">
+      <div className="bg-surface-card border border-border rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <p className="text-slate-500 text-sm">Price History (Live)</p>
+          <p className="text-muted text-sm">Price History (Live)</p>
           <div className="flex gap-1">
             {RANGES.map(r => (
               <button
@@ -260,7 +261,7 @@ export default function StockDetail() {
                   'px-3 py-1 rounded-md text-xs font-medium transition-colors',
                   range === r.label
                     ? 'bg-accent-blue/20 text-accent-blue'
-                    : 'text-slate-400 hover:text-slate-900 hover:bg-surface-hover'
+                    : 'text-muted hover:text-primary hover:bg-surface-hover'
                 )}
               >
                 {r.label}
@@ -276,7 +277,7 @@ export default function StockDetail() {
         ) : errorChart ? (
           <ErrorMessage error={errorChart} />
         ) : chartData.length === 0 ? (
-          <div className="h-[300px] flex items-center justify-center text-slate-400 text-sm">
+          <div className="h-[300px] flex items-center justify-center text-muted text-sm">
             No chart data available for this range.
           </div>
         ) : (

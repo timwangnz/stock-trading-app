@@ -55,17 +55,17 @@ export default function UserMenu() {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-surface-card border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-2 w-56 bg-surface-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
           {/* User info */}
-          <div className="px-4 py-3 border-b border-slate-200">
-            <p className="text-slate-900 text-sm font-medium truncate">{user.name}</p>
-            <p className="text-slate-400 text-xs truncate">{user.email}</p>
+          <div className="px-4 py-3 border-b border-border">
+            <p className="text-primary text-sm font-medium truncate">{user.name}</p>
+            <p className="text-muted text-xs truncate">{user.email}</p>
           </div>
 
           {/* Actions */}
           <button
             onClick={() => { setOpen(false); logout() }}
-            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-500 hover:text-slate-900 hover:bg-surface-hover transition-colors"
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted hover:text-primary hover:bg-surface-hover transition-colors"
           >
             <LogOut size={14} />
             Sign out

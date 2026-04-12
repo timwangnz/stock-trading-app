@@ -35,7 +35,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-slate-200 border-t-accent-blue rounded-full animate-spin" />
+        <div className="w-6 h-6 border-2 border-border border-t-accent-blue rounded-full animate-spin" />
       </div>
     )
   }

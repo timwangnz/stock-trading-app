@@ -24,16 +24,16 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-56 min-h-screen bg-surface-card border-r border-slate-200 flex flex-col">
+    <aside className="w-56 min-h-screen bg-surface-card border-r border-border flex flex-col">
       {/* Logo */}
-      <div className="px-6 py-5 border-b border-slate-200">
+      <div className="px-6 py-5 border-b border-border">
         <div className="flex items-center gap-2">
           <TrendingUp className="text-accent-blue" size={22} />
-          <span className="text-slate-900 font-semibold text-lg tracking-tight">
+          <span className="text-primary font-semibold text-lg tracking-tight">
             TradeBuddy
           </span>
         </div>
-        <p className="text-slate-400 text-xs mt-0.5">Vibe Trading Platform</p>
+        <p className="text-muted text-xs mt-0.5">Vibe Trading Platform</p>
       </div>
 
       {/* Navigation links */}
@@ -53,7 +53,7 @@ export default function Sidebar() {
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
                 isActive
                   ? 'bg-accent-blue/15 text-accent-blue font-medium'
-                  : 'text-slate-500 hover:bg-surface-hover hover:text-slate-900'
+                  : 'text-muted hover:bg-surface-hover hover:text-primary'
               )}
             >
               <Icon size={17} />
@@ -82,7 +82,7 @@ export default function Sidebar() {
       )}
 
       {/* Footer — show role badge + permissions hint */}
-      <div className="px-5 py-4 border-t border-slate-200">
+      <div className="px-5 py-4 border-t border-border">
         {role && (
           <div className="mb-3">
             <span className={clsx(
@@ -90,7 +90,7 @@ export default function Sidebar() {
               role === 'admin'    && 'text-orange-400  border-orange-400/20  bg-orange-400/5',
               role === 'premium'  && 'text-yellow-400 border-yellow-400/20 bg-yellow-400/5',
               role === 'user'     && 'text-accent-blue border-accent-blue/20 bg-accent-blue/5',
-              role === 'readonly' && 'text-slate-400   border-slate-200',
+              role === 'readonly' && 'text-muted   border-border',
             )}>
               {role}
             </span>
@@ -99,7 +99,7 @@ export default function Sidebar() {
               role === 'admin'    && 'text-orange-400/50',
               role === 'premium'  && 'text-yellow-400/50',
               role === 'user'     && 'text-accent-blue/50',
-              role === 'readonly' && 'text-slate-400',
+              role === 'readonly' && 'text-muted',
             )}>
               {role === 'admin'    && 'Full access + admin panel'}
               {role === 'premium'  && 'Full portfolio & watchlist access'}
@@ -108,7 +108,7 @@ export default function Sidebar() {
             </p>
           </div>
         )}
-        <p className="text-slate-400 text-xs leading-relaxed">
+        <p className="text-muted text-xs leading-relaxed">
           All data is simulated.<br />Not financial advice.
         </p>
       </div>

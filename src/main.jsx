@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { AuthProvider } from './context/AuthContext'
 import { AppProvider } from './context/AppContext'
+import { ThemeProvider } from './context/ThemeContext'
 import './index.css'
 import App from './App.jsx'
 
@@ -17,7 +18,9 @@ createRoot(document.getElementById('root')).render(
         {/* AppProvider manages portfolio + watchlist — must be inside AuthProvider
             so it can react to login/logout via useAuth() */}
         <AppProvider>
-          <App />
+          <ThemeProvider>
+            <App />
+          </ThemeProvider>
         </AppProvider>
       </AuthProvider>
     </GoogleOAuthProvider>
