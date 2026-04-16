@@ -4,14 +4,13 @@
 
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, Search, X, Loader2, TrendingDown, ShoppingCart, MinusCircle } from 'lucide-react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
 import { searchTickers } from '../services/polygonApi'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
-import { useTheme } from '../context/ThemeContext'
+import StockTreemap from '../components/StockTreemap'
 import clsx from 'clsx'
 
 /**
@@ -343,7 +342,6 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
 export default function Portfolio() {
   const { state, dispatch } = useApp()
   const { canTrade, isReadonly } = useAuth()
-  const { chart: chartTheme, pieColors: COLORS } = useTheme()
   const [showAddForm, setShowAddForm] = useState(false)
   // activePanel: { symbol, mode: 'buy'|'sell' } or null
   const [activePanel, setActivePanel] = useState(null)
@@ -356,14 +354,15 @@ export default function Portfolio() {
   // Enrich holdings with live price data
   const holdings = useMemo(() => {
     return state.portfolio.map((holding, i) => {
-      const live     = prices.get(holding.symbol)
-      const price    = live?.price ?? 0
-      const value    = price * holding.shares
-      const cost     = holding.avgCost * holding.shares
-      const gain     = value - cost
-      const gainPct  = cost > 0 ? (gain / cost) * 100 : 0
-      const meta     = STOCKS.find(s => s.symbol === holding.symbol) ?? {}
-      return { ...holding, ...meta, price, value, cost, gain, gainPct, colorIndex: i }
+      const live      = prices.get(holding.symbol)
+      const price     = live?.price     ?? 0
+      const changePct = live?.changePct ?? 0   // today's % price change
+      const value     = price * holding.shares
+      const cost      = holding.avgCost * holding.shares
+      const gain      = value - cost
+      const gainPct   = cost > 0 ? (gain / cost) * 100 : 0
+      const meta      = STOCKS.find(s => s.symbol === holding.symbol) ?? {}
+      return { ...holding, ...meta, price, changePct, value, cost, gain, gainPct, colorIndex: i }
     })
   }, [state.portfolio, prices])
 
@@ -416,87 +415,27 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* ── Allocation pie chart ─────────────────────── */}
+      {/* ── Allocation heatmap ───────────────────────── */}
       {holdings.length > 0 && totalValue > 0 && (
-        <div className="bg-surface-card border border-border rounded-xl p-5">
-          <p className="text-muted text-xs mb-4">Portfolio Allocation</p>
-          <div className="flex items-center gap-6">
-
-            {/* Pie */}
-            <div className="shrink-0" style={{ width: 180, height: 180 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={holdings.map(h => ({
-                      name:  h.symbol,
-                      value: h.value,
-                      pct:   ((h.value / totalValue) * 100).toFixed(1),
-                    }))}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={52}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                    strokeWidth={0}
-                  >
-                    {holdings.map((h, i) => (
-                      <Cell key={h.symbol} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: chartTheme.tooltip.bg,
-                      border: `1px solid ${chartTheme.tooltip.border}`,
-                      borderRadius: '10px',
-                      fontSize: '12px',
-                      color: chartTheme.tooltip.text,
-                    }}
-                    formatter={(value, name, props) => [
-                      `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${props.payload.pct}%)`,
-                      name,
-                    ]}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Legend */}
-            <div className="flex flex-col gap-2 flex-1 min-w-0">
-              {holdings.map((h, i) => {
-                const pct = ((h.value / totalValue) * 100)
-                return (
-                  <div key={h.symbol} className="flex items-center gap-2 min-w-0">
-                    <div
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: COLORS[i % COLORS.length] }}
-                    />
-                    <span className="text-secondary text-xs font-mono font-semibold w-14 shrink-0">
-                      {h.symbol}
-                    </span>
-                    {/* Bar */}
-                    <div className="flex-1 bg-surface-hover rounded-full h-1.5 overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
-                          width: `${pct}%`,
-                          backgroundColor: COLORS[i % COLORS.length],
-                        }}
-                      />
-                    </div>
-                    <span className="text-muted text-xs w-10 text-right shrink-0">
-                      {pct.toFixed(1)}%
-                    </span>
-                    <span className="text-muted text-xs w-20 text-right shrink-0 hidden sm:block">
-                      ${h.value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-
-          </div>
-        </div>
+        <StockTreemap
+          data={holdings.map(h => ({
+            name:      h.symbol,
+            symbol:    h.symbol,
+            size:      h.value,
+            changePct: h.changePct,
+            price:     h.price,
+            tooltipLines: [
+              `Value: $${h.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              `Allocation: ${((h.value / totalValue) * 100).toFixed(1)}%`,
+              `Return: ${h.gainPct >= 0 ? '+' : ''}${h.gainPct.toFixed(2)}%`,
+            ],
+          }))}
+          height={200}
+          clampRange={[-5, 5]}
+          onCellClick={(sym) => dispatch({ type: ACTIONS.VIEW_STOCK, payload: sym })}
+          title="Portfolio Allocation"
+          subtitle="Size = position value · Color = today's price change %"
+        />
       )}
 
       {/* ── Holdings table ───────────────────────────── */}

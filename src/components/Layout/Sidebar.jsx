@@ -4,15 +4,18 @@
  * Highlights the active page and dispatches NAVIGATE actions.
  */
 
-import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield } from 'lucide-react'
+import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
+import PortfolioSparkline from '../PortfolioSparkline'
 import clsx from 'clsx'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',  page: 'dashboard',  icon: LayoutDashboard },
   { label: 'Portfolio',  page: 'portfolio',  icon: Briefcase },
   { label: 'Watchlist',  page: 'watchlist',  icon: Star },
+  { label: 'History',    page: 'history',    icon: BarChart2 },
+  { label: 'Activity',   page: 'activity',   icon: Activity },
 ]
 
 export default function Sidebar() {
@@ -62,6 +65,9 @@ export default function Sidebar() {
           )
         })}
       </nav>
+
+      {/* Portfolio sparkline widget */}
+      <PortfolioSparkline />
 
       {/* Admin link — only visible to admins */}
       {isAdmin && (

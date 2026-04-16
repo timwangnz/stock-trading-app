@@ -95,6 +95,7 @@ app.post('/api/auth/google', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
+    takeSnapshot(user.id).catch(() => {})   // fire-and-forget daily snapshot
     res.json({ token, user })
   } catch (err) {
     console.error('Auth error:', err.message)
@@ -171,6 +172,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { password_hash: _, ...safeUser } = user
     const token = signJwt(safeUser)
     audit(safeUser.id, 'login', { method: 'email' }, req)
+    takeSnapshot(safeUser.id).catch(() => {})   // fire-and-forget daily snapshot
     res.json({ token, user: safeUser })
   } catch (err) {
     console.error('Login error:', err.message)
@@ -183,6 +185,32 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   audit(req.user.id, 'logout', null, req)
   res.json({ ok: true })
+})
+
+// ── Market data (Polygon proxy — no JWT needed, API key stays server-side) ──
+app.use('/api/market', marketRouter)
+
+// ── Internal / machine-to-machine routes (no JWT — own auth) ────
+// Must be registered BEFORE app.use('/api', authMiddleware) so the
+// global JWT check doesn't fire on them.
+
+// POST /api/internal/snapshot-all — called by the daily scheduled task
+// Protected by SNAPSHOT_SECRET header instead of a user JWT
+app.post('/api/internal/snapshot-all', async (req, res) => {
+  const secret = process.env.SNAPSHOT_SECRET
+  if (!secret || req.headers['x-snapshot-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const [users] = await pool.query('SELECT id FROM users WHERE is_disabled = 0')
+    const results = await Promise.allSettled(users.map(u => takeSnapshot(u.id)))
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed    = results.filter(r => r.status === 'rejected').length
+    console.log(`[snapshot] Daily run — ${succeeded} ok, ${failed} failed`)
+    res.json({ succeeded, failed, total: users.length })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── All routes below require a valid JWT ────────────────────────
@@ -397,6 +425,94 @@ app.get('/api/admin/users/:id/watchlist', adminOnly, async (req, res) => {
       [req.params.id]
     )
     res.json(rows.map(r => r.symbol))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Portfolio snapshots ──────────────────────────────────────────
+
+/**
+ * Core snapshot logic — shared by all snapshot endpoints.
+ * Fetches live prices from Polygon, computes total_value = Σ(shares × price),
+ * and upserts one row into portfolio_snapshots for today's date.
+ */
+async function takeSnapshot(userId) {
+  const [holdings] = await pool.query(
+    'SELECT symbol, shares FROM portfolio WHERE user_id = ?',
+    [userId]
+  )
+  if (!holdings.length) return null
+
+  const symbols = holdings.map(h => h.symbol).join(',')
+  const apiKey  = process.env.POLYGON_API_KEY
+  if (!apiKey) throw new Error('POLYGON_API_KEY not set')
+
+  const res  = await fetch(
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbols}&apiKey=${apiKey}`
+  )
+  const data = await res.json()
+  const priceMap = {}
+  for (const t of (data.tickers ?? [])) {
+    priceMap[t.ticker] = t.day?.c ?? t.prevDay?.c ?? 0
+  }
+
+  let totalValue = 0
+  const breakdown = {}
+  for (const h of holdings) {
+    const price = priceMap[h.symbol] ?? 0
+    const value = parseFloat(h.shares) * price
+    totalValue += value
+    breakdown[h.symbol] = { shares: parseFloat(h.shares), price, value }
+  }
+
+  const today = new Date().toISOString().split('T')[0]
+  await pool.query(
+    `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE total_value = VALUES(total_value), breakdown = VALUES(breakdown)`,
+    [userId, today, totalValue.toFixed(2), JSON.stringify(breakdown)]
+  )
+  return { date: today, total_value: totalValue, breakdown }
+}
+
+// POST /api/portfolio/snapshot — take today's snapshot (any logged-in user)
+app.post('/api/portfolio/snapshot', async (req, res) => {
+  try {
+    const snap = await takeSnapshot(req.user.id)
+    res.json(snap ?? { message: 'Portfolio empty — nothing to snapshot' })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
+// GET /api/portfolio/snapshots?from=YYYY-MM-DD&to=YYYY-MM-DD
+app.get('/api/portfolio/snapshots', async (req, res) => {
+  const from = req.query.from ?? '2000-01-01'
+  const to   = req.query.to   ?? new Date().toISOString().split('T')[0]
+  try {
+    const [rows] = await pool.query(
+      `SELECT date, total_value, breakdown
+       FROM portfolio_snapshots
+       WHERE user_id = ? AND date BETWEEN ? AND ?
+       ORDER BY date ASC`,
+      [req.user.id, from, to]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/admin/snapshot-all — snapshot every active user (admin only)
+app.post('/api/admin/snapshot-all', adminOnly, async (req, res) => {
+  try {
+    const [users] = await pool.query('SELECT id FROM users WHERE is_disabled = 0')
+    const results = await Promise.allSettled(users.map(u => takeSnapshot(u.id)))
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed    = results.filter(r => r.status === 'rejected').length
+    audit(req.user.id, 'snapshot_all', { succeeded, failed }, req)
+    res.json({ succeeded, failed, total: users.length })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

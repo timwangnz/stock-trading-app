@@ -116,6 +116,24 @@ async function setup() {
   `)
   console.log('✅ Table "watchlist" ready')
 
+  // ── portfolio_snapshots ───────────────────────────────────────
+  // One row per user per calendar day — records the exact portfolio
+  // value at the time of snapshot (after market close or on login).
+  // breakdown: JSON object { SYMBOL: { shares, price, value }, … }
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      id          BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      user_id     VARCHAR(50)      NOT NULL,
+      date        DATE             NOT NULL,
+      total_value DECIMAL(15,2)    NOT NULL,
+      breakdown   JSON             NULL,
+      created_at  TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_user_date (user_id, date),
+      INDEX idx_user_date (user_id, date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `)
+  console.log('✅ Table "portfolio_snapshots" ready')
+
   // ── audit_log ─────────────────────────────────────────────────
   // Records user actions: login, logout, buy, sell, watchlist changes, etc.
   // details is a JSON blob with action-specific data (symbol, shares, etc.)

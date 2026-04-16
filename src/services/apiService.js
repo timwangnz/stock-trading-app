@@ -65,6 +65,18 @@ export function removeHolding(symbol) {
   return request('DELETE', `/portfolio/${symbol}`)
 }
 
+// ── Portfolio Snapshots ─────────────────────────────────────────
+
+/** Trigger a snapshot of the current portfolio value for the logged-in user */
+export function triggerSnapshot() {
+  return request('POST', '/portfolio/snapshot')
+}
+
+/** Fetch stored daily snapshots between two ISO date strings (YYYY-MM-DD) */
+export function getPortfolioSnapshots(from, to) {
+  return request('GET', `/portfolio/snapshots?from=${from}&to=${to}`)
+}
+
 // ── Watchlist ───────────────────────────────────────────────────
 
 export function fetchWatchlist() {

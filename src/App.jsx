@@ -15,6 +15,8 @@ import Portfolio     from './pages/Portfolio'
 import Watchlist     from './pages/Watchlist'
 import StockDetail   from './pages/StockDetail'
 import AdminPanel    from './pages/AdminPanel'
+import History       from './pages/History'
+import Activity      from './pages/Activity'
 import Login         from './pages/Login'
 
 const PAGES = {
@@ -23,6 +25,8 @@ const PAGES = {
   watchlist: Watchlist,
   stock:     StockDetail,
   admin:     AdminPanel,
+  history:   History,
+  activity:  Activity,
 }
 
 export default function App() {

@@ -14,7 +14,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { Star, ArrowLeft, PlusCircle, ExternalLink } from 'lucide-react'
+import { Star, ArrowLeft, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
 import { STOCKS } from '../data/mockData'
@@ -46,9 +46,9 @@ export default function StockDetail() {
   const { chart: chartTheme } = useTheme()
   const symbol = state.selectedStock
 
-  const [range,       setRange]       = useState('3M')
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [shares,      setShares]      = useState('')
+  const [range,      setRange]      = useState('3M')
+  const [activeForm, setActiveForm] = useState(null)   // null | 'buy' | 'sell'
+  const [shares,     setShares]     = useState('')
 
   // Separate loading/error states for snapshot vs chart data
   const [snapshot,     setSnapshot]     = useState(null)
@@ -58,6 +58,12 @@ export default function StockDetail() {
   const [loadingChart, setLoadingChart] = useState(true)
   const [errorSnap,    setErrorSnap]    = useState(null)
   const [errorChart,   setErrorChart]   = useState(null)
+
+  // ── Reset form state when symbol changes ─────────────────────
+  useEffect(() => {
+    setActiveForm(null)
+    setShares('')
+  }, [symbol])
 
   // ── Fetch snapshot + ticker details on mount (or symbol change) ──
   useEffect(() => {
@@ -102,7 +108,9 @@ export default function StockDetail() {
   const price     = snapshot?.price     ?? 0
   const change    = snapshot?.change    ?? 0
   const changePct = snapshot?.changePct ?? 0
-  const isWatched = state.watchlist.includes(symbol)
+  const isWatched    = state.watchlist.includes(symbol)
+  const holding      = state.portfolio.find(h => h.symbol === symbol) ?? null
+  const sharesHeld   = holding?.shares ?? 0
 
   const firstPrice = chartData[0]?.close ?? 0
   const lastPrice  = chartData[chartData.length - 1]?.close ?? 0
@@ -119,16 +127,27 @@ export default function StockDetail() {
     })
   }
 
-  const handleAddToPortfolio = (e) => {
+  const openForm = (form) => {
+    setShares('')
+    setActiveForm(prev => prev === form ? null : form)
+  }
+
+  const handleBuy = (e) => {
     e.preventDefault()
     const sh = parseFloat(shares)
     if (isNaN(sh) || sh <= 0) return
-    dispatch({
-      type: ACTIONS.ADD_TO_PORTFOLIO,
-      payload: { symbol, shares: sh, avgCost: price },
-    })
+    dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload: { symbol, shares: sh, avgCost: price } })
     setShares('')
-    setShowAddForm(false)
+    setActiveForm(null)
+  }
+
+  const handleSell = (e) => {
+    e.preventDefault()
+    const sh = parseFloat(shares)
+    if (isNaN(sh) || sh <= 0 || sh > sharesHeld) return
+    dispatch({ type: ACTIONS.SELL_SHARES, payload: { symbol, shares: sh } })
+    setShares('')
+    setActiveForm(null)
   }
 
   if (errorSnap) return <ErrorMessage error={errorSnap} />
@@ -175,6 +194,7 @@ export default function StockDetail() {
             </div>
 
             <div className="flex gap-2">
+              {/* Watch button */}
               <button
                 onClick={handleToggleWatch}
                 className={clsx(
@@ -187,39 +207,107 @@ export default function StockDetail() {
                 <Star size={14} className={clsx(isWatched && 'fill-yellow-400')} />
                 {isWatched ? 'Watching' : 'Watch'}
               </button>
+
+              {/* Sell button — only active when user holds shares */}
               <button
-                onClick={() => setShowAddForm(v => !v)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-accent-blue hover:bg-accent-blue/80 text-white transition-colors"
+                onClick={() => openForm('sell')}
+                disabled={sharesHeld <= 0}
+                className={clsx(
+                  'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
+                  activeForm === 'sell'
+                    ? 'bg-loss/20 border-loss/40 text-loss'
+                    : sharesHeld > 0
+                      ? 'border-loss/30 text-loss hover:bg-loss/10 hover:border-loss/50'
+                      : 'border-border text-faint cursor-not-allowed opacity-40'
+                )}
+                title={sharesHeld <= 0 ? "You don't hold any shares of this stock" : `Sell ${sharesHeld} shares`}
               >
-                <PlusCircle size={14} /> Add to Portfolio
+                <TrendingDown size={14} /> Sell
+              </button>
+
+              {/* Buy button */}
+              <button
+                onClick={() => openForm('buy')}
+                className={clsx(
+                  'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                  activeForm === 'buy'
+                    ? 'bg-gain/20 border border-gain/40 text-gain'
+                    : 'bg-accent-blue hover:bg-accent-blue/80 text-white'
+                )}
+              >
+                <TrendingUp size={14} /> Buy
               </button>
             </div>
           </div>
 
-          {/* Add to portfolio form */}
-          {showAddForm && (
+          {/* Current position pill — shown when user holds shares */}
+          {sharesHeld > 0 && (
+            <div className="inline-flex items-center gap-2 bg-accent-blue/10 border border-accent-blue/20 text-accent-blue text-xs px-3 py-1.5 rounded-full">
+              <TrendingUp size={11} />
+              You hold <strong>{sharesHeld}</strong> share{sharesHeld !== 1 ? 's' : ''} · avg cost ${holding.avgCost.toFixed(2)} · value ${(sharesHeld * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          )}
+
+          {/* Buy form */}
+          {activeForm === 'buy' && (
             <form
-              onSubmit={handleAddToPortfolio}
-              className="bg-surface-card border border-border rounded-xl p-4 flex items-center gap-3"
+              onSubmit={handleBuy}
+              className="bg-surface-card border border-gain/20 rounded-xl p-4 flex items-center gap-3"
             >
+              <TrendingUp size={15} className="text-gain shrink-0" />
               <p className="text-muted text-sm shrink-0">
                 Buy at <span className="text-primary font-medium">${price.toFixed(2)}</span>
               </p>
               <input
-                type="number" min="0.001" step="any" placeholder="Number of shares"
+                type="number" min="0.001" step="any" placeholder="Shares"
                 value={shares} onChange={e => setShares(e.target.value)}
-                className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
+                autoFocus
+                className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border focus:border-gain/40 transition-colors"
                 required
               />
-              {shares && !isNaN(parseFloat(shares)) && (
+              {shares && !isNaN(parseFloat(shares)) && parseFloat(shares) > 0 && (
                 <p className="text-muted text-sm shrink-0">
-                  = ${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  = <span className="text-primary font-medium">${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </p>
               )}
-              <button type="submit" className="bg-accent-blue hover:bg-accent-blue/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
-                Confirm
+              <button type="submit" className="bg-gain hover:bg-gain/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
+                Confirm Buy
               </button>
-              <button type="button" onClick={() => setShowAddForm(false)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
+              <button type="button" onClick={() => setActiveForm(null)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
+            </form>
+          )}
+
+          {/* Sell form */}
+          {activeForm === 'sell' && sharesHeld > 0 && (
+            <form
+              onSubmit={handleSell}
+              className="bg-surface-card border border-loss/20 rounded-xl p-4 flex items-center gap-3"
+            >
+              <TrendingDown size={15} className="text-loss shrink-0" />
+              <p className="text-muted text-sm shrink-0">
+                Sell at <span className="text-primary font-medium">${price.toFixed(2)}</span>
+                <span className="text-faint ml-1">(max {sharesHeld})</span>
+              </p>
+              <input
+                type="number" min="0.001" max={sharesHeld} step="any" placeholder="Shares"
+                value={shares} onChange={e => setShares(e.target.value)}
+                autoFocus
+                className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border focus:border-loss/40 transition-colors"
+                required
+              />
+              {shares && !isNaN(parseFloat(shares)) && parseFloat(shares) > 0 && (
+                <p className="text-muted text-sm shrink-0">
+                  = <span className="text-primary font-medium">${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={parseFloat(shares) > sharesHeld}
+                className="bg-loss hover:bg-loss/80 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0"
+              >
+                Confirm Sell
+              </button>
+              <button type="button" onClick={() => setActiveForm(null)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
             </form>
           )}
 

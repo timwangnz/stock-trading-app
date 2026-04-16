@@ -51,7 +51,7 @@ export default function AgentPanel({ open, onClose }) {
       {/* Drawer */}
       <aside
         className={`
-          fixed top-0 right-0 h-screen w-[420px] z-50
+          fixed top-0 right-0 h-screen w-1/2 z-50
           bg-surface-card border-l border-border
           flex flex-col shadow-2xl
           transition-transform duration-300 ease-in-out
