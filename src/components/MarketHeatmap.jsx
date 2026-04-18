@@ -71,16 +71,16 @@ export default function MarketHeatmap({ stocks }) {
     if (!stocks?.length) return []
     return stocks.map(s => {
       const details = tickerMap.get(s.symbol)
+      const cap = details?.marketCap ?? null
+
       return {
         name:        s.symbol,
         symbol:      s.symbol,
-        size:        details?.marketCap ?? 1,
+        size:        cap ?? 1,
         changePct:   s.changePct,
         price:       s.price,
         companyName: details?.name ?? null,
-        tooltipLines: details?.marketCap
-          ? [formatCap(details.marketCap)]
-          : [],
+        tooltipLines: cap ? [formatCap(cap)] : [],
       }
     })
   }, [stocks, tickerMap])

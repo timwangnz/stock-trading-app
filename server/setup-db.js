@@ -152,6 +152,20 @@ async function setup() {
   `)
   console.log('✅ Table "audit_log" ready')
 
+  // ── dashboard_symbols ─────────────────────────────────────────
+  // Custom stocks pinned to a user's dashboard via the Manage button.
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS dashboard_symbols (
+      id         INT UNSIGNED     NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      user_id    VARCHAR(50)      NOT NULL,
+      symbol     VARCHAR(20)      NOT NULL,
+      added_at   TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_user_symbol (user_id, symbol),
+      INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `)
+  console.log('✅ Table "dashboard_symbols" ready')
+
   await conn.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

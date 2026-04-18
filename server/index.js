@@ -518,6 +518,53 @@ app.post('/api/admin/snapshot-all', adminOnly, async (req, res) => {
   }
 })
 
+// ── Dashboard custom symbols ──────────────────────────────────────
+// GET  /api/dashboard/symbols        → list user's pinned symbols
+// POST /api/dashboard/symbols        → pin a symbol  { symbol }
+// DELETE /api/dashboard/symbols/:sym → unpin a symbol
+
+app.get('/api/dashboard/symbols', authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT symbol FROM dashboard_symbols WHERE user_id = ? ORDER BY added_at ASC`,
+      [req.user.id]
+    )
+    res.json(rows.map(r => r.symbol))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/dashboard/symbols', authMiddleware, async (req, res) => {
+  const { symbol } = req.body
+  if (!symbol) return res.status(400).json({ error: 'symbol required' })
+  const sym = symbol.toUpperCase().trim()
+  try {
+    await pool.query(
+      `INSERT IGNORE INTO dashboard_symbols (user_id, symbol) VALUES (?, ?)`,
+      [req.user.id, sym]
+    )
+    audit(req.user.id, 'dashboard_pin', { symbol: sym }, req)
+    res.json({ ok: true, symbol: sym })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/dashboard/symbols/:symbol', authMiddleware, async (req, res) => {
+  const sym = req.params.symbol.toUpperCase()
+  try {
+    await pool.query(
+      `DELETE FROM dashboard_symbols WHERE user_id = ? AND symbol = ?`,
+      [req.user.id, sym]
+    )
+    audit(req.user.id, 'dashboard_unpin', { symbol: sym }, req)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Audit log ────────────────────────────────────────────────────
 // Own activity (any authenticated user)
 app.get('/api/audit', async (req, res) => {

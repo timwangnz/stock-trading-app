@@ -1,81 +1,90 @@
 /**
  * useDashboardSymbols.js
  *
- * Returns the merged set of symbols to show on the dashboard:
- *   1. Portfolio holdings   (from AppContext — synced with DB)
- *   2. Watchlist symbols    (from AppContext — synced with DB)
- *   3. Custom additions     (persisted in localStorage per user)
+ * Returns the merged set of symbols shown on the dashboard:
+ *   1. Portfolio holdings  (AppContext — synced with DB)
+ *   2. Watchlist symbols   (AppContext — synced with DB)
+ *   3. Custom pins         (DB per user via /api/dashboard/symbols)
  *
- * Persistence design:
- *   - A dedicated useEffect LOADS from localStorage when user.id is known.
- *   - A separate useEffect SAVES to localStorage whenever custom changes,
- *     but ONLY after the initial load has completed (guarded by a ref).
- *   - No side effects inside state updaters — avoids React StrictMode issues.
+ * Custom symbols are now stored server-side so they survive across
+ * devices and browser data clears. Optimistic updates keep the UI
+ * snappy — the local state changes immediately, then the API is
+ * called in the background.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApp }  from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 
-const storageKey = (userId) => `dashboard_custom_symbols_${userId}`
+const API = '/api/dashboard/symbols'
 
+// ── API helpers ───────────────────────────────────────────────────
+async function apiFetch(path, options = {}) {
+  const token = localStorage.getItem('tradebuddy_token')
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  return res.json()
+}
+
+// ── Hook ──────────────────────────────────────────────────────────
 export function useDashboardSymbols() {
   const { state }           = useApp()
   const { user }            = useAuth()
   const [custom, setCustom] = useState([])
 
-  // Tracks whether we've finished loading from localStorage for the current user.
-  // Using a ref (not state) so flipping it doesn't trigger a re-render.
-  const loadedRef = useRef(false)
-
-  // ── LOAD: read from localStorage whenever user.id changes ──────
+  // Load from DB when user is known
   useEffect(() => {
-    if (!user?.id) {
-      // User signed out — clear custom list
-      loadedRef.current = false
-      setCustom([])
-      return
-    }
+    if (!user?.id) { setCustom([]); return }
 
-    loadedRef.current = false   // prevent any in-flight save from firing
-    try {
-      const raw = localStorage.getItem(storageKey(user.id))
-      setCustom(raw ? JSON.parse(raw) : [])
-    } catch {
-      setCustom([])
-    }
-    loadedRef.current = true
+    apiFetch(API)
+      .then(symbols => setCustom(symbols ?? []))
+      .catch(() => setCustom([]))
   }, [user?.id])
 
-  // ── SAVE: persist to localStorage whenever custom changes ───────
-  // The loadedRef guard means this will never fire before the load above
-  // completes, so we never accidentally overwrite saved data with [].
-  useEffect(() => {
-    if (!user?.id || !loadedRef.current) return
-    try {
-      localStorage.setItem(storageKey(user.id), JSON.stringify(custom))
-    } catch {
-      // localStorage quota exceeded or private-browsing block — fail silently
-    }
-  }, [custom, user?.id])
-
-  // ── Mutators ────────────────────────────────────────────────────
-  const addCustom = useCallback((symbol) => {
+  // Add — optimistic update then persist
+  const addCustom = useCallback(async (symbol) => {
     const sym = symbol.toUpperCase().trim()
     if (!sym) return
+
+    // Optimistic
     setCustom(prev => prev.includes(sym) ? prev : [...prev, sym])
+
+    try {
+      await apiFetch(API, { method: 'POST', body: JSON.stringify({ symbol: sym }) })
+    } catch {
+      // Roll back if the server rejected it
+      setCustom(prev => prev.filter(s => s !== sym))
+    }
   }, [])
 
-  const removeCustom = useCallback((symbol) => {
-    setCustom(prev => prev.filter(s => s !== symbol))
+  // Remove — optimistic update then persist
+  const removeCustom = useCallback(async (symbol) => {
+    const sym = symbol.toUpperCase().trim()
+
+    // Optimistic
+    setCustom(prev => prev.filter(s => s !== sym))
+
+    try {
+      await apiFetch(`${API}/${sym}`, { method: 'DELETE' })
+    } catch {
+      // Roll back
+      setCustom(prev => prev.includes(sym) ? prev : [...prev, sym])
+    }
   }, [])
 
-  // ── Merge portfolio + watchlist + custom ────────────────────────
+  // Merge portfolio + watchlist + custom (deduped, ordered by source)
   const symbols = useMemo(() => {
     const seen = new Map()
-    for (const h of state.portfolio)   seen.set(h.symbol, 'portfolio')
-    for (const s of state.watchlist)   if (!seen.has(s)) seen.set(s, 'watchlist')
-    for (const s of custom)            if (!seen.has(s)) seen.set(s, 'custom')
+    for (const h of state.portfolio) seen.set(h.symbol, 'portfolio')
+    for (const s of state.watchlist) if (!seen.has(s)) seen.set(s, 'watchlist')
+    for (const s of custom)          if (!seen.has(s)) seen.set(s, 'custom')
     return [...seen.entries()].map(([symbol, source]) => ({ symbol, source }))
   }, [state.portfolio, state.watchlist, custom])
 

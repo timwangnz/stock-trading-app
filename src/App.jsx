@@ -53,9 +53,9 @@ export default function App() {
   const PageComponent = PAGES[resolvedPage] ?? Dashboard
 
   return (
-    <div className="flex min-h-screen bg-surface">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex h-screen overflow-hidden bg-surface">
+      <Sidebar className="h-full overflow-y-auto" />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header
           agentOpen={agentOpen}
           onToggleAgent={() => setAgentOpen(v => !v)}
