@@ -27,6 +27,9 @@ FROM node:22-alpine AS production
 
 WORKDIR /app
 
+# postgresql-client provides psql — needed for auto-restore on startup
+RUN apk add --no-cache postgresql-client
+
 # Install only production dependencies
 COPY package*.json ./
 RUN npm ci --omit=dev
