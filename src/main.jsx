@@ -7,7 +7,9 @@ import { ThemeProvider } from './context/ThemeContext'
 import './index.css'
 import App from './App.jsx'
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+// Use the env var baked in at build time.
+// If empty (e.g. local Docker install), Google Sign-In is hidden in the UI.
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

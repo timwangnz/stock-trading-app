@@ -90,7 +90,7 @@ Once you're comfortable with the codebase, try these challenges:
 
 1. **Add a candlestick chart** — use the `open/high/low/close` fields in `mockData.js`
 2. **Real data** — swap `mockData.js` for calls to the free [Polygon.io](https://polygon.io) or [Alpha Vantage](https://www.alphavantage.co) APIs
-3. **Paper trading** — add a "cash balance" to the portfolio and deduct it when buying shares
+3. **Vibe trading** — add a "cash balance" to the portfolio and deduct it when buying shares
 4. **Price alerts** — let users set a target price and show a notification when it's hit
 5. **Persist state** — save portfolio & watchlist to `localStorage` so they survive page reloads
 

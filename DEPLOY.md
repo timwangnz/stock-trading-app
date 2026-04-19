@@ -5,10 +5,12 @@
 ```
 Browser → Cloud Run (Express + React build)
                ↓
-          Cloud SQL (MySQL)
+          Cloud SQL (PostgreSQL 15)
 ```
 
 A single Cloud Run service serves both the React frontend (as static files) and the Express API. Cloud Run connects to Cloud SQL via a private Unix socket — no public database port needed.
+
+> **Free database option**: For zero-cost hosting during development, use [Neon](https://neon.tech) (free PostgreSQL with 0.5 GB storage and serverless auto-scaling). Just set `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` to your Neon connection details — no socket path needed.
 
 ---
 
@@ -38,11 +40,11 @@ gcloud services enable \
   secretmanager.googleapis.com
 ```
 
-### 2 — Create Cloud SQL (MySQL) instance
+### 2 — Create Cloud SQL (PostgreSQL) instance
 
 ```bash
 gcloud sql instances create tradebuddy-db \
-  --database-version=MYSQL_8_0 \
+  --database-version=POSTGRES_15 \
   --tier=db-f1-micro \
   --region=us-central1
 
@@ -68,7 +70,7 @@ chmod +x cloud-sql-proxy
 ./cloud-sql-proxy YOUR_PROJECT:us-central1:tradebuddy-db
 
 # In another terminal, run the schema setup
-DB_HOST=127.0.0.1 DB_USER=tradebuddy DB_PASSWORD=YOUR_PW DB_NAME=tradebuddy \
+DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=tradebuddy DB_PASSWORD=YOUR_PW DB_NAME=tradebuddy \
   node server/setup-db.js
 ```
 
@@ -87,7 +89,7 @@ echo -n "YOUR_DB_PASSWORD" | \
 echo -n "YOUR_ANTHROPIC_API_KEY" | \
   gcloud secrets create ANTHROPIC_API_KEY --data-file=-
 
-# Polygon.io API key (used by the frontend at build time — set as build arg)
+# Polygon.io API key
 echo -n "YOUR_POLYGON_API_KEY" | \
   gcloud secrets create POLYGON_API_KEY --data-file=-
 ```
@@ -130,33 +132,35 @@ Connect your GitHub repo to Cloud Build and it will auto-deploy on every push to
 
 ## Environment Variables Reference
 
-| Variable          | Where set         | Description                              |
-|-------------------|-------------------|------------------------------------------|
-| `NODE_ENV`        | Cloud Run env     | Set to `production`                      |
-| `PORT`            | Auto (Cloud Run)  | Injected automatically by Cloud Run      |
-| `JWT_SECRET`      | Secret Manager    | JWT signing key                          |
-| `DB_USER`         | Cloud Run env     | MySQL user (`tradebuddy`)                |
-| `DB_NAME`         | Cloud Run env     | Database name (`tradebuddy`)             |
-| `DB_PASSWORD`     | Secret Manager    | MySQL password                           |
-| `DB_SOCKET_PATH`  | Cloud Run env     | `/cloudsql/PROJECT:REGION:INSTANCE`      |
-| `ANTHROPIC_API_KEY` | Secret Manager  | Claude API key for Trading Agent         |
-| `VITE_API_URL`    | Build arg         | Set to empty string (same origin in prod)|
-| `VITE_GOOGLE_CLIENT_ID` | Build arg   | Google OAuth client ID                   |
+| Variable            | Where set          | Description                               |
+|---------------------|--------------------|-------------------------------------------|
+| `NODE_ENV`          | Cloud Run env      | Set to `production`                       |
+| `PORT`              | Auto (Cloud Run)   | Injected automatically by Cloud Run       |
+| `JWT_SECRET`        | Secret Manager     | JWT signing key                           |
+| `DB_USER`           | Cloud Run env      | PostgreSQL user (`tradebuddy`)            |
+| `DB_NAME`           | Cloud Run env      | Database name (`tradebuddy`)              |
+| `DB_PASSWORD`       | Secret Manager     | PostgreSQL password                       |
+| `DB_SOCKET_PATH`    | Cloud Run env      | `/cloudsql/PROJECT:REGION:INSTANCE`       |
+| `ANTHROPIC_API_KEY` | Secret Manager     | Claude API key for Trading Agent          |
+| `POLYGON_API_KEY`   | Secret Manager     | Polygon.io key (server-side only)         |
+| `VITE_GOOGLE_CLIENT_ID` | Build arg      | Google OAuth client ID                    |
 
 ---
 
-## Frontend Environment Variables
+## Neon (Free PostgreSQL Alternative)
 
-The Vite frontend reads `VITE_*` variables **at build time**. For production, set them in the Dockerfile as `ARG` / `ENV` or pass via `--build-arg` during `docker build`:
+[Neon](https://neon.tech) offers a free PostgreSQL tier (0.5 GB, scales to zero). To use it instead of Cloud SQL:
 
-```bash
-docker build \
-  --build-arg VITE_GOOGLE_CLIENT_ID=your-client-id \
-  --build-arg VITE_POLYGON_API_KEY=your-polygon-key \
-  -t tradebuddy .
-```
-
-Or add them to `cloudbuild.yaml` under the build step's `--build-arg` flags.
+1. Create a project at neon.tech — copy the connection string.
+2. Set these env vars in Cloud Run (no `DB_SOCKET_PATH` needed):
+   ```
+   DB_HOST=ep-xxx.us-east-2.aws.neon.tech
+   DB_PORT=5432
+   DB_USER=your_neon_user
+   DB_PASSWORD=your_neon_password
+   DB_NAME=tradebuddy
+   ```
+3. Neon connections require SSL — add `?sslmode=require` or set `ssl: true` in `db.js` if you see SSL errors.
 
 ---
 
@@ -175,17 +179,19 @@ curl https://YOUR_CLOUD_RUN_URL/api/health
 
 ---
 
-## Cost estimate (light usage)
+## Cost estimate
 
-| Service         | Free tier         | Typical cost        |
-|-----------------|-------------------|---------------------|
-| Cloud Run       | 2M req/month free | ~$0 at low traffic  |
-| Cloud SQL f1-micro | — (no free tier) | ~$7–10 / month    |
-| Artifact Registry | 0.5 GB free      | ~$0 for one image   |
-| Secret Manager  | 6 secrets free    | ~$0                 |
+| Service                | Free tier             | Typical cost           |
+|------------------------|-----------------------|------------------------|
+| Cloud Run              | 2M req/month free     | ~$0 at low traffic     |
+| Cloud SQL PostgreSQL   | No free tier          | ~$7–10 / month         |
+| **Neon PostgreSQL**    | **0.5 GB free**       | **$0 (free tier)**     |
+| Artifact Registry      | 0.5 GB free           | ~$0 for one image      |
+| Secret Manager         | 6 secrets free        | ~$0                    |
 
-**Total: ~$7–10/month** for a always-on Cloud SQL instance.
-To save money while learning, stop the SQL instance when not in use:
+**Cloud SQL total: ~$7–10/month**. To save money, stop the instance when not in use:
 ```bash
 gcloud sql instances patch tradebuddy-db --activation-policy=NEVER
 ```
+
+**Neon total: $0/month** on the free tier (auto-pauses after 5 min inactivity).

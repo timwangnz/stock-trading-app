@@ -1,172 +1,167 @@
 /**
  * server/setup-db.js
- * Creates the tradebuddy database and all tables from scratch.
+ * Creates all TradeBuddy tables in PostgreSQL from scratch.
  * Run once with:  npm run db:setup
- * Safe to re-run — uses IF NOT EXISTS / IF EXISTS guards.
+ * Safe to re-run — uses IF NOT EXISTS / ON CONFLICT guards.
  */
 
-import mysql  from 'mysql2/promise'
+import pg     from 'pg'
 import dotenv from 'dotenv'
 
 dotenv.config({ path: new URL('../.env', import.meta.url).pathname })
 
+const { Client } = pg
+
 async function setup() {
-  console.log('🔧 Setting up TradeBuddy database…\n')
+  console.log('🔧 Setting up TradeBuddy database (PostgreSQL)…\n')
 
-  // Connect without a database selected so we can CREATE it
-  const conn = await mysql.createConnection({
-    host:     process.env.DB_HOST     || 'localhost',
-    port:     parseInt(process.env.DB_PORT || '3306'),
-    user:     process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-  })
+  const clientConfig = process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+    : {
+        host:     process.env.DB_HOST     || 'localhost',
+        port:     parseInt(process.env.DB_PORT || '5432'),
+        user:     process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_NAME || 'tradebuddy',
+      }
 
-  const dbName = process.env.DB_NAME || 'tradebuddy'
+  const client = new Client(clientConfig)
 
-  // ── Database ─────────────────────────────────────────────────
-  await conn.query(
-    `CREATE DATABASE IF NOT EXISTS \`${dbName}\`
-     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-  )
-  console.log(`✅ Database "${dbName}" ready`)
-  await conn.query(`USE \`${dbName}\``)
+  await client.connect()
 
   // ── users ─────────────────────────────────────────────────────
   // role:        admin | premium | user | readonly  (default: user)
   // is_disabled: admin can block a user from signing in
-  await conn.query(`
+  await client.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id          VARCHAR(50)                              NOT NULL PRIMARY KEY,
-      email       VARCHAR(255)                             NOT NULL UNIQUE,
-      name        VARCHAR(255),
-      avatar_url  VARCHAR(500),
-      password_hash VARCHAR(255)                              NULL,
-      role          ENUM('admin','premium','user','readonly') NOT NULL DEFAULT 'user',
-      is_disabled   TINYINT(1)                               NOT NULL DEFAULT 0,
-      created_at    TIMESTAMP                                DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-  `)
-
-  // If the table already existed from a previous run, add any missing columns.
-  // We check information_schema first so we don't fail on databases that don't
-  // support ADD COLUMN IF NOT EXISTS (MySQL < 8.0).
-  const columnsToAdd = [
-    { name: 'password_hash', def: 'VARCHAR(255) NULL' },
-    { name: 'role',          def: "ENUM('admin','premium','user','readonly') NOT NULL DEFAULT 'user'" },
-    { name: 'is_disabled',   def: 'TINYINT(1) NOT NULL DEFAULT 0' },
-  ]
-  for (const col of columnsToAdd) {
-    const [[row]] = await conn.query(
-      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = ?`,
-      [dbName, col.name]
+      id            VARCHAR(50)  NOT NULL PRIMARY KEY,
+      email         VARCHAR(255) NOT NULL UNIQUE,
+      name          VARCHAR(255),
+      avatar_url    VARCHAR(500),
+      password_hash VARCHAR(255) NULL,
+      role          VARCHAR(20)  NOT NULL DEFAULT 'user'
+                    CHECK (role IN ('admin','premium','user','readonly')),
+      is_disabled   BOOLEAN      NOT NULL DEFAULT FALSE,
+      created_at    TIMESTAMPTZ  DEFAULT NOW()
     )
-    if (!row) {
-      await conn.query(`ALTER TABLE users ADD COLUMN ${col.name} ${col.def}`)
-      console.log(`   ↳ Added column "${col.name}"`)
-    }
-  }
-
+  `)
   console.log('✅ Table "users" ready')
 
   // ── portfolio ─────────────────────────────────────────────────
-  // If the table exists but is missing user_id (old single-user schema),
-  // drop it and recreate with the correct multi-user schema.
-  const [[portfolioUserIdCol]] = await conn.query(
-    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'portfolio' AND COLUMN_NAME = 'user_id'`,
-    [dbName]
-  )
-  if (!portfolioUserIdCol) {
-    await conn.query(`DROP TABLE IF EXISTS portfolio`)
-    console.log('   ↳ Dropped old "portfolio" table (missing user_id column)')
-  }
-  await conn.query(`
+  await client.query(`
     CREATE TABLE IF NOT EXISTS portfolio (
-      user_id    VARCHAR(50)   NOT NULL,
-      symbol     VARCHAR(10)   NOT NULL,
-      shares     DECIMAL(15,6) NOT NULL,
-      avg_cost   DECIMAL(15,4) NOT NULL,
-      updated_at TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
-                               ON UPDATE CURRENT_TIMESTAMP,
+      user_id    VARCHAR(50)    NOT NULL,
+      symbol     VARCHAR(10)    NOT NULL,
+      shares     NUMERIC(15,6)  NOT NULL,
+      avg_cost   NUMERIC(15,4)  NOT NULL,
+      updated_at TIMESTAMPTZ    DEFAULT NOW(),
       PRIMARY KEY (user_id, symbol),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    )
   `)
   console.log('✅ Table "portfolio" ready')
 
   // ── watchlist ─────────────────────────────────────────────────
-  const [[watchlistUserIdCol]] = await conn.query(
-    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'watchlist' AND COLUMN_NAME = 'user_id'`,
-    [dbName]
-  )
-  if (!watchlistUserIdCol) {
-    await conn.query(`DROP TABLE IF EXISTS watchlist`)
-    console.log('   ↳ Dropped old "watchlist" table (missing user_id column)')
-  }
-  await conn.query(`
+  await client.query(`
     CREATE TABLE IF NOT EXISTS watchlist (
       user_id  VARCHAR(50)  NOT NULL,
       symbol   VARCHAR(10)  NOT NULL,
-      added_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+      added_at TIMESTAMPTZ  DEFAULT NOW(),
       PRIMARY KEY (user_id, symbol),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    )
   `)
   console.log('✅ Table "watchlist" ready')
 
   // ── portfolio_snapshots ───────────────────────────────────────
   // One row per user per calendar day — records the exact portfolio
   // value at the time of snapshot (after market close or on login).
-  // breakdown: JSON object { SYMBOL: { shares, price, value }, … }
-  await conn.query(`
+  // breakdown: JSONB object { SYMBOL: { shares, price, value }, … }
+  await client.query(`
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-      id          BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT PRIMARY KEY,
-      user_id     VARCHAR(50)      NOT NULL,
-      date        DATE             NOT NULL,
-      total_value DECIMAL(15,2)    NOT NULL,
-      breakdown   JSON             NULL,
-      created_at  TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uq_user_date (user_id, date),
-      INDEX idx_user_date (user_id, date)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      id          BIGSERIAL      PRIMARY KEY,
+      user_id     VARCHAR(50)    NOT NULL,
+      date        DATE           NOT NULL,
+      total_value NUMERIC(15,2)  NOT NULL,
+      breakdown   JSONB          NULL,
+      created_at  TIMESTAMPTZ    DEFAULT NOW(),
+      UNIQUE (user_id, date)
+    )
+  `)
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_snapshots_user_date
+      ON portfolio_snapshots (user_id, date)
   `)
   console.log('✅ Table "portfolio_snapshots" ready')
 
   // ── audit_log ─────────────────────────────────────────────────
   // Records user actions: login, logout, buy, sell, watchlist changes, etc.
-  // details is a JSON blob with action-specific data (symbol, shares, etc.)
-  await conn.query(`
+  // details is a JSONB blob with action-specific data (symbol, shares, etc.)
+  await client.query(`
     CREATE TABLE IF NOT EXISTS audit_log (
-      id         BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT PRIMARY KEY,
-      user_id    VARCHAR(50)      NOT NULL,
-      action     VARCHAR(50)      NOT NULL,
-      details    JSON             NULL,
-      ip         VARCHAR(45)      NULL,
-      created_at TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_user    (user_id),
-      INDEX idx_action  (action),
-      INDEX idx_created (created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      id         BIGSERIAL    PRIMARY KEY,
+      user_id    VARCHAR(50)  NOT NULL,
+      action     VARCHAR(50)  NOT NULL,
+      details    JSONB        NULL,
+      ip         VARCHAR(45)  NULL,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    )
   `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_user    ON audit_log (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log (action)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log (created_at)`)
   console.log('✅ Table "audit_log" ready')
 
   // ── dashboard_symbols ─────────────────────────────────────────
   // Custom stocks pinned to a user's dashboard via the Manage button.
-  await conn.query(`
+  await client.query(`
     CREATE TABLE IF NOT EXISTS dashboard_symbols (
-      id         INT UNSIGNED     NOT NULL AUTO_INCREMENT PRIMARY KEY,
-      user_id    VARCHAR(50)      NOT NULL,
-      symbol     VARCHAR(20)      NOT NULL,
-      added_at   TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_user_symbol (user_id, symbol),
-      INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      id       SERIAL       PRIMARY KEY,
+      user_id  VARCHAR(50)  NOT NULL,
+      symbol   VARCHAR(20)  NOT NULL,
+      added_at TIMESTAMPTZ  DEFAULT NOW(),
+      UNIQUE (user_id, symbol)
+    )
+  `)
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_dashboard_symbols_user
+      ON dashboard_symbols (user_id)
   `)
   console.log('✅ Table "dashboard_symbols" ready')
 
-  await conn.end()
+  // ── user_llm_settings ────────────────────────────────────────
+  // Stores each user's chosen LLM provider, model, and encrypted API key.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS user_llm_settings (
+      user_id     VARCHAR(50)  PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      provider    VARCHAR(20)  NOT NULL DEFAULT 'anthropic',
+      model       VARCHAR(100) NOT NULL DEFAULT 'claude-haiku-4-5-20251001',
+      api_key_enc TEXT         NULL,
+      updated_at  TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `)
+  console.log('✅ Table "user_llm_settings" ready')
+
+  // ── password_reset_tokens ─────────────────────────────────────
+  // One-time tokens for the forgot-password flow.
+  // Expires after 1 hour; marked used after password is changed.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id         BIGSERIAL    PRIMARY KEY,
+      user_id    VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token      TEXT         NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ  NOT NULL,
+      used       BOOLEAN      NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `)
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_reset_tokens_token
+      ON password_reset_tokens (token)
+  `)
+  console.log('✅ Table "password_reset_tokens" ready')
+
+  await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')
   process.exit(0)

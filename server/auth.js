@@ -39,20 +39,44 @@ export async function verifyGoogleToken(idToken) {
 }
 
 /**
+ * Exchange a Google OAuth authorization code for an ID token,
+ * then verify and return the user profile.
+ * Used by the useGoogleLogin popup flow (redirect_uri = 'postmessage').
+ */
+export async function exchangeGoogleCode(code) {
+  const clientId     = process.env.GOOGLE_CLIENT_ID
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  const client       = new OAuth2Client(clientId, clientSecret, 'postmessage')
+
+  const { tokens } = await client.getToken(code)
+  if (!tokens.id_token) throw new Error('No id_token in Google token response')
+
+  const ticket  = await client.verifyIdToken({ idToken: tokens.id_token, audience: clientId })
+  const payload = ticket.getPayload()
+  return {
+    googleId: payload.sub,
+    email:    payload.email,
+    name:     payload.name,
+    avatar:   payload.picture,
+  }
+}
+
+/**
  * Issue a JWT — includes role so every request carries permission info
  * without a DB lookup.
  */
 export function signJwt(user) {
   return jwt.sign(
     {
-      id:     user.id,
-      email:  user.email,
-      name:   user.name,
-      avatar: user.avatar,
-      role:   user.role ?? 'user',
+      id:          user.id,
+      email:       user.email,
+      name:        user.name,
+      avatar:      user.avatar,
+      role:        user.role ?? 'user',
+      is_disabled: user.is_disabled ?? false,
     },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '24h' }   // reduced from 7d — limits exposure if token is stolen
   )
 }
 

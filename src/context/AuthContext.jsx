@@ -13,7 +13,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { googleSignIn, emailSignUp, emailSignIn, setAuthToken } from '../services/apiService'
+import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthToken } from '../services/apiService'
 
 const AuthContext = createContext(null)
 
@@ -67,6 +67,13 @@ export function AuthProvider({ children }) {
     saveSession(token, profile)
   }, [saveSession])
 
+  // Called when using the access-token (implicit) Google flow
+  const loginWithToken = useCallback(async (accessToken) => {
+    const { token, user: profile } = await googleSignInWithToken(accessToken)
+    saveSession(token, profile)
+  }, [saveSession])
+
+
   const signUp = useCallback(async (name, email, password) => {
     const { token, user: profile } = await emailSignUp(name, email, password)
     saveSession(token, profile)
@@ -102,7 +109,7 @@ export function AuthProvider({ children }) {
   const isReadonly = !!user && !hasRole(role, 'user')     // view-only
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signUp, signIn, logout, role, canTrade, isAdmin, isReadonly }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithToken, signUp, signIn, logout, role, canTrade, isAdmin, isReadonly }}>
       {children}
     </AuthContext.Provider>
   )

@@ -41,6 +41,11 @@ export function googleSignIn(idToken) {
   return request('POST', '/auth/google', { idToken })
 }
 
+/** Exchange Google access token for our JWT + user profile */
+export function googleSignInWithToken(accessToken) {
+  return request('POST', '/auth/google-token', { accessToken })
+}
+
 /** Create a new account with email + password */
 export function emailSignUp(name, email, password) {
   return request('POST', '/auth/signup', { name, email, password })
@@ -49,6 +54,26 @@ export function emailSignUp(name, email, password) {
 /** Sign in with email + password */
 export function emailSignIn(email, password) {
   return request('POST', '/auth/login', { email, password })
+}
+
+/** Get the user's LLM provider/model settings */
+export function getLLMSettings() {
+  return request('GET', '/settings/llm')
+}
+
+/** Save the user's LLM provider/model/key settings */
+export function saveLLMSettings({ provider, model, apiKey }) {
+  return request('PUT', '/settings/llm', { provider, model, apiKey })
+}
+
+/** Send a password reset email */
+export function forgotPassword(email) {
+  return request('POST', '/auth/forgot-password', { email })
+}
+
+/** Reset password using a token from the email link */
+export function resetPassword(token, password) {
+  return request('POST', '/auth/reset-password', { token, password })
 }
 
 // ── Portfolio ───────────────────────────────────────────────────

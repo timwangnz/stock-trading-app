@@ -4,8 +4,8 @@
  * and the full app shell for signed-in users.
  */
 
-import { useState }  from 'react'
-import { useApp }    from './context/AppContext'
+import { useState, useEffect }  from 'react'
+import { useApp, ACTIONS }    from './context/AppContext'
 import { useAuth }   from './context/AuthContext'
 import Sidebar       from './components/Layout/Sidebar'
 import Header        from './components/Layout/Header'
@@ -18,6 +18,8 @@ import AdminPanel    from './pages/AdminPanel'
 import History       from './pages/History'
 import Activity      from './pages/Activity'
 import Login         from './pages/Login'
+import About         from './pages/About'
+import ResetPassword from './pages/ResetPassword'
 
 const PAGES = {
   dashboard: Dashboard,
@@ -27,15 +29,31 @@ const PAGES = {
   admin:     AdminPanel,
   history:   History,
   activity:  Activity,
+  about:     About,
 }
+
+// Read URL params once at module load (before any re-renders strip them)
+const urlParams   = new URLSearchParams(window.location.search)
+const RESET_TOKEN = urlParams.get('reset_token')
+const SHOW_ABOUT  = urlParams.get('about') !== null
+if (RESET_TOKEN || SHOW_ABOUT) window.history.replaceState({}, '', '/')
 
 export default function App() {
   const { user, loading, isAdmin } = useAuth()
-  const { state }                  = useApp()
-  const [agentOpen, setAgentOpen]  = useState(false)
+  const { state, dispatch }        = useApp()
+  const [agentOpen, setAgentOpen]   = useState(false)
+  const [resetToken, setResetToken] = useState(RESET_TOKEN)
+  const [showAbout, setShowAbout]   = useState(SHOW_ABOUT)
+
+  // If the user is already logged in and /?about was in the URL, navigate to About
+  useEffect(() => {
+    if (user && showAbout) {
+      dispatch({ type: ACTIONS.NAVIGATE, payload: 'about' })
+      setShowAbout(false)
+    }
+  }, [user, showAbout, dispatch])
 
   // While restoring the session from localStorage, show nothing
-  // (avoids a flash of the login page on refresh)
   if (loading) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center">
@@ -44,8 +62,32 @@ export default function App() {
     )
   }
 
+  // Password reset link — show reset form regardless of auth state
+  if (resetToken) {
+    return <ResetPassword token={resetToken} onDone={() => setResetToken(null)} />
+  }
+
+  // Public About page — accessible without signing in
+  if (!user && showAbout) {
+    return (
+      <div className="min-h-screen bg-surface">
+        {/* Minimal header with sign-in button */}
+        <div className="border-b border-border px-6 py-3 flex items-center justify-between">
+          <span className="text-primary font-semibold text-sm">TradeBuddy</span>
+          <button
+            onClick={() => setShowAbout(false)}
+            className="text-sm bg-accent-blue hover:bg-accent-blue/80 text-white px-4 py-1.5 rounded-lg transition-colors font-medium"
+          >
+            Sign In
+          </button>
+        </div>
+        <About />
+      </div>
+    )
+  }
+
   // Not signed in → show login page
-  if (!user) return <Login />
+  if (!user) return <Login onAbout={() => setShowAbout(true)} />
 
   // Resolve page — block non-admins from reaching the admin panel
   const requestedPage = state.currentPage

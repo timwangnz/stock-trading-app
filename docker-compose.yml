@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────
+# TradeBuddy — docker-compose.yml
+# Runs the full stack locally: Express app + PostgreSQL
+#
+# ⚠️  Do not run this directly — use install.sh which sets up .env first.
+#
+# Usage (after install.sh):
+#   docker compose up -d        ← start
+#   docker compose down         ← stop
+#   docker compose logs -f app  ← view logs
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL database ────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       tradebuddy
+      POSTGRES_USER:     tradebuddy
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradebuddy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── TradeBuddy app ─────────────────────────────────────────────
+  app:
+    image: anpwang/tradebuddy:latest
+    restart: unless-stopped
+    ports:
+      - "3001:8080"
+    env_file: .env
+    environment:
+      # Override DB settings to point at the compose db service
+      DB_HOST:     db
+      DB_PORT:     5432
+      DB_USER:     tradebuddy
+      DB_NAME:     tradebuddy
+      NODE_ENV:    production
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

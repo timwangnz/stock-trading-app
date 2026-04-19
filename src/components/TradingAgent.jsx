@@ -8,7 +8,7 @@
  *                             so the model knows your holdings.
  *
  *  2. CLOUD MODE  (fallback) — posts to POST /api/agent/trade, which calls
- *                              Claude with tool_use and can execute real paper
+ *                              Claude with tool_use and can execute real vibe
  *                              trades in MySQL.
  *
  * Users can toggle between modes with the 🖥 / ☁ button in the header.
@@ -204,7 +204,7 @@ function buildSystemPrompt(portfolio, liveDataBlock = null) {
     ? `\n\n${liveDataBlock}\n\nIMPORTANT: Use the live market data above when answering. Quote exact prices and changes.`
     : ''
 
-  return `You are a helpful AI trading assistant for a paper-trading app called TradeBuddy.
+  return `You are a helpful AI trading assistant for a vibe-trading app called TradeBuddy.
 The user's current portfolio is:
 ${holdings}
 ${liveSection}
@@ -213,9 +213,9 @@ Guidelines:
 - When live market data is provided, always use those exact numbers in your response.
 - You can discuss trading strategies, market concepts, and general financial education.
 - If asked to execute a trade (buy/sell), explain that in local mode you can only give advice —
-  they can switch to Cloud mode (☁ button) to execute real paper trades.
+  they can switch to Cloud mode (☁ button) to execute real vibe trades.
 - Keep responses concise and friendly. Use bullet points for lists.
-- This is paper trading only. Always remind users this is not financial advice.`
+- This is vibe trading only. Always remind users this is not financial advice.`
 }
 
 // ── Main component ───────────────────────────────────────────────
@@ -397,7 +397,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
       role: 'agent',
       text: next
         ? "Switched to 🖥 Local mode (Gemma via Ollama). Ask me anything about your portfolio!"
-        : "Switched to ☁ Cloud mode (Claude). I can execute paper trades too!",
+        : "Switched to ☁ Cloud mode (Claude). I can execute vibe trades too!",
       trade: null,
     }])
   }
@@ -516,7 +516,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
             </button>
           </div>
           <p className="text-faint text-xs mt-1.5 px-1">
-            {useOllama ? `Gemma (local) · paper trading only · not financial advice` : `Claude (cloud) · paper trading only · not financial advice`}
+            {useOllama ? `Gemma (local) · vibe trading only · not financial advice` : `Claude (cloud) · vibe trading only · not financial advice`}
           </p>
         </div>
       </div>
@@ -638,7 +638,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
               </button>
             </div>
             <p className="text-faint text-xs mt-1.5 px-1">
-              {useOllama ? `Gemma (local) · paper trading only · not financial advice` : `Claude (cloud) · paper trading only · not financial advice`}
+              {useOllama ? `Gemma (local) · vibe trading only · not financial advice` : `Claude (cloud) · vibe trading only · not financial advice`}
             </p>
           </div>
         </div>

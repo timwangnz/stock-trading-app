@@ -4,7 +4,7 @@
  * Highlights the active page and dispatches NAVIGATE actions.
  */
 
-import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity } from 'lucide-react'
+import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity, Info } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { label: 'Watchlist',  page: 'watchlist',  icon: Star },
   { label: 'History',    page: 'history',    icon: BarChart2 },
   { label: 'Activity',   page: 'activity',   icon: Activity },
+  { label: 'About',      page: 'about',      icon: Info },
 ]
 
 export default function Sidebar() {

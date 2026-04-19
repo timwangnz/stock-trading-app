@@ -26,8 +26,8 @@ export async function log(userId, action, details = null, req = null) {
 
     await pool.query(
       `INSERT INTO audit_log (user_id, action, details, ip)
-       VALUES (?, ?, ?, ?)`,
-      [userId, action, details ? JSON.stringify(details) : null, ip]
+       VALUES ($1, $2, $3, $4)`,
+      [userId, action, details ?? null, ip]
     )
   } catch (err) {
     // Never let audit failures surface to the caller

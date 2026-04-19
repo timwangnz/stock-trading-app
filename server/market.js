@@ -20,6 +20,13 @@ import { Router } from 'express'
 const router  = Router()
 const BASE    = 'https://api.polygon.io'
 
+// ── Input validators ──────────────────────────────────────────────
+const SYMBOL_RE = /^[A-Z0-9.]{1,10}$/
+const DATE_RE   = /^\d{4}-\d{2}-\d{2}$/
+
+function validSymbol(s) { return SYMBOL_RE.test((s ?? '').toUpperCase()) }
+function validDate(d)   { return DATE_RE.test(d ?? '') }
+
 // ── Polygon fetch helper ─────────────────────────────────────────
 async function polyFetch(path) {
   const key = process.env.POLYGON_API_KEY
@@ -41,9 +48,15 @@ router.get('/snapshots', async (req, res) => {
   const { symbols } = req.query
   if (!symbols) return res.status(400).json({ error: 'symbols query param required' })
 
+  // Validate each symbol
+  const syms = symbols.split(',').map(s => s.trim().toUpperCase())
+  if (syms.some(s => !validSymbol(s))) {
+    return res.status(400).json({ error: 'Invalid symbol format' })
+  }
+
   try {
     const data = await polyFetch(
-      `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbols}`
+      `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms.join(',')}`
     )
     res.json(data)
   } catch (err) {
@@ -54,9 +67,11 @@ router.get('/snapshots', async (req, res) => {
 // ── Aggregates (OHLCV bars for charts) ───────────────────────────
 // GET /api/market/aggregates/:symbol?from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get('/aggregates/:symbol', async (req, res) => {
-  const { symbol } = req.params
+  const symbol = req.params.symbol.toUpperCase()
   const { from, to } = req.query
-  if (!from || !to) return res.status(400).json({ error: 'from and to query params required' })
+
+  if (!validSymbol(symbol))     return res.status(400).json({ error: 'Invalid symbol' })
+  if (!validDate(from) || !validDate(to)) return res.status(400).json({ error: 'from and to must be YYYY-MM-DD' })
 
   try {
     const data = await polyFetch(
@@ -72,8 +87,11 @@ router.get('/aggregates/:symbol', async (req, res) => {
 // ── Ticker details ────────────────────────────────────────────────
 // GET /api/market/ticker/:symbol
 router.get('/ticker/:symbol', async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase()
+  if (!validSymbol(symbol)) return res.status(400).json({ error: 'Invalid symbol' })
+
   try {
-    const data = await polyFetch(`/v3/reference/tickers/${req.params.symbol}`)
+    const data = await polyFetch(`/v3/reference/tickers/${symbol}`)
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: err.message })
@@ -83,8 +101,10 @@ router.get('/ticker/:symbol', async (req, res) => {
 // ── Ticker search ─────────────────────────────────────────────────
 // GET /api/market/search?q=apple&limit=8
 router.get('/search', async (req, res) => {
-  const { q, limit = 8 } = req.query
+  const { q } = req.query
   if (!q) return res.json([])
+
+  const limit = Math.min(parseInt(req.query.limit ?? '8'), 20)
 
   try {
     const data = await polyFetch(
@@ -99,9 +119,12 @@ router.get('/search', async (req, res) => {
 // ── Previous close ────────────────────────────────────────────────
 // GET /api/market/prev-close/:symbol
 router.get('/prev-close/:symbol', async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase()
+  if (!validSymbol(symbol)) return res.status(400).json({ error: 'Invalid symbol' })
+
   try {
     const data = await polyFetch(
-      `/v2/aggs/ticker/${req.params.symbol}/prev?adjusted=true`
+      `/v2/aggs/ticker/${symbol}/prev?adjusted=true`
     )
     res.json(data)
   } catch (err) {

@@ -9,6 +9,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
+# Declare build-time variables (Railway passes env vars as build args)
+# These get baked into the Vite bundle at build time.
+ARG VITE_GOOGLE_CLIENT_ID
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+
 # Copy source and build
 COPY . .
 RUN npm run build
@@ -26,8 +31,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy server source
+# Copy server source and entrypoint
 COPY server/ ./server/
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh
 
 # Copy React build output from Stage 1
 COPY --from=builder /app/dist ./dist
@@ -38,4 +45,5 @@ ENV NODE_ENV=production
 
 EXPOSE 8080
 
-CMD ["node", "server/index.js"]
+# Entrypoint runs DB setup (safe to re-run) then starts the server
+ENTRYPOINT ["./docker-entrypoint.sh"]
