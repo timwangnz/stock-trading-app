@@ -42,6 +42,10 @@ services:
       DB_USER:     tradebuddy
       DB_NAME:     tradebuddy
       NODE_ENV:    production
+    volumes:
+      # Backup folder mounted so the container can auto-restore on startup.
+      # The host path uses ~ which Docker expands to the current user's home.
+      - ${HOME}/Documents/TradeBuddy-Backups:/backups:ro
     depends_on:
       db:
         condition: service_healthy

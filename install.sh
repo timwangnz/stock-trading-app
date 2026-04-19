@@ -11,8 +11,9 @@
 #   2. Asks for your API keys interactively
 #   3. Generates all secrets automatically
 #   4. Writes .env
-#   5. Builds and starts the app with docker compose
-#   6. Opens http://localhost:3001 in your browser
+#   5. Pulls and starts the app with docker compose
+#   6. Schedules a daily midnight backup to ~/Documents/TradeBuddy-Backups/
+#   7. Opens http://localhost:3001 in your browser
 # ─────────────────────────────────────────────────────────────────
 
 set -e
@@ -260,6 +261,38 @@ else
   print_step "Admin credentials removed from .env (stored securely in the database)"
 fi
 
+# ── Step 6: Set up daily backup ───────────────────────────────────
+print_header "Step 6 — Setting up daily backup"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKUP_SCRIPT="$SCRIPT_DIR/backup.sh"
+BACKUP_DIR="$HOME/Documents/TradeBuddy-Backups"
+
+# Make backup.sh executable
+chmod +x "$BACKUP_SCRIPT"
+print_step "backup.sh is ready"
+
+# Create backup directory now so iCloud starts syncing it immediately
+mkdir -p "$BACKUP_DIR"
+print_step "Backup folder created: $BACKUP_DIR"
+
+# Install cron job (runs backup.sh at midnight daily)
+CRON_JOB="0 0 * * * cd \"$SCRIPT_DIR\" && bash \"$BACKUP_SCRIPT\" >> \"$BACKUP_DIR/backup.log\" 2>&1"
+
+# Check if it's already scheduled
+if crontab -l 2>/dev/null | grep -qF "$BACKUP_SCRIPT"; then
+  print_step "Daily backup already scheduled — skipping"
+else
+  # Add to crontab
+  ( crontab -l 2>/dev/null; echo "$CRON_JOB" ) | crontab -
+  print_step "Daily backup scheduled at midnight (cron)"
+fi
+
+print_info "Backups saved to: $BACKUP_DIR"
+print_info "iCloud will sync this folder automatically if enabled"
+print_info "Last 7 days of backups are kept; older ones are deleted"
+print_info "Run manually anytime: bash backup.sh"
+
 # ── Done ──────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -272,6 +305,7 @@ echo -e "  ${DIM}Useful commands:${RESET}"
 echo -e "  ${DIM}  docker compose stop        ← stop TradeBuddy${RESET}"
 echo -e "  ${DIM}  docker compose start       ← start again${RESET}"
 echo -e "  ${DIM}  docker compose logs -f app ← view logs${RESET}"
+echo -e "  ${DIM}  bash backup.sh             ← run backup now${RESET}"
 echo ""
 
 # Open browser (macOS)
