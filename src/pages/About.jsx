@@ -260,7 +260,7 @@ export default function About() {
                 <p className="text-primary font-medium text-sm mb-1">Open Terminal and run one command</p>
                 <div className="bg-gray-950 rounded-xl p-4 font-mono text-sm border border-gray-800 mt-2">
                   <p className="text-gray-500 text-xs mb-1"># paste this into Terminal and press Enter:</p>
-                  <p className="text-green-400 select-all">curl -fsSL https://raw.githubusercontent.com/your-repo/main/install.sh | bash</p>
+                  <p className="text-green-400 select-all">curl -fsSL https://raw.githubusercontent.com/timwangnz/stock-trading-app/main/install.sh | bash</p>
                 </div>
               </div>
             </div>
@@ -294,7 +294,7 @@ export default function About() {
 
           <p className="text-muted text-sm pt-1">
             For server/office deployments, see the full guide in the{' '}
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="text-accent-blue hover:underline">README →</a>
+            <a href="https://github.com/timwangnz/stock-trading-app" target="_blank" rel="noreferrer" className="text-accent-blue hover:underline">README →</a>
           </p>
         </div>
       </div>

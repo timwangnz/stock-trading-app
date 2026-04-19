@@ -63,7 +63,7 @@ You will also need accounts and API keys from:
 ### Step 1 — Clone the Repository
 
 ```bash
-git clone <your-repo-url> tradebuddy
+git clone https://github.com/timwangnz/stock-trading-app.git tradebuddy
 cd tradebuddy
 npm install
 ```
