@@ -29,14 +29,16 @@ export async function getSnapshots(symbols) {
   const data = await apiFetch(`/snapshots?symbols=${symbols.join(',')}`)
   return (data.tickers ?? []).map(t => ({
     symbol:    t.ticker,
-    price:     t.day?.c    ?? t.prevDay?.c ?? 0,
-    change:    parseFloat((t.todaysChange     ?? 0).toFixed(2)),
-    changePct: parseFloat((t.todaysChangePerc ?? 0).toFixed(2)),
-    volume:    t.day?.v    ?? 0,
-    high:      t.day?.h    ?? 0,
-    low:       t.day?.l    ?? 0,
-    open:      t.day?.o    ?? 0,
-    prevClose: t.prevDay?.c ?? 0,
+    // Use || not ?? — Polygon returns day.c = 0 on non-trading days, and
+    // ?? treats 0 as a valid value so it never falls through to prevDay.
+    price:     t.day?.c    || t.prevDay?.c || 0,
+    change:    t.day?.c    ? parseFloat((t.todaysChange     ?? 0).toFixed(2)) : 0,
+    changePct: t.day?.c    ? parseFloat((t.todaysChangePerc ?? 0).toFixed(2)) : 0,
+    volume:    t.day?.v    || 0,
+    high:      t.day?.h    || 0,
+    low:       t.day?.l    || 0,
+    open:      t.day?.o    || 0,
+    prevClose: t.prevDay?.c || 0,
   }))
 }
 

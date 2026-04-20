@@ -232,7 +232,8 @@ app.post('/api/auth/google', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})   // fire-and-forget daily snapshot
+    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
+    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
     res.json({ token, user })
   } catch (err) {
     console.error('Auth error:', err.message)
@@ -284,7 +285,8 @@ app.post('/api/auth/google-token', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})
+    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
+    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
     res.json({ token, user })
   } catch (err) {
     console.error('Google token auth error:', err.message)
@@ -324,7 +326,8 @@ app.post('/api/auth/google-code', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})
+    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
+    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
     res.json({ token, user })
   } catch (err) {
     console.error('Google code exchange error:', err.message)
@@ -402,7 +405,8 @@ app.post('/api/auth/login', async (req, res) => {
     const { password_hash: _, ...safeUser } = user
     const token = signJwt(safeUser)
     audit(safeUser.id, 'login', { method: 'email' }, req)
-    takeSnapshot(safeUser.id).catch(() => {})   // fire-and-forget daily snapshot
+    takeSnapshot(safeUser.id).catch(() => {})        // fire-and-forget daily snapshot
+    backfillSnapshots(safeUser.id).catch(() => {})   // fill any gaps since last login
     res.json({ token, user: safeUser })
   } catch (err) {
     console.error('Login error:', err.message)
@@ -829,7 +833,15 @@ async function takeSnapshot(userId) {
   const data = await res.json()
   const priceMap = {}
   for (const t of (data.tickers ?? [])) {
-    priceMap[t.ticker] = t.day?.c ?? t.prevDay?.c ?? 0
+    const price = t.day?.c ?? t.prevDay?.c ?? 0
+    if (price > 0) priceMap[t.ticker] = price
+  }
+
+  // If Polygon returned no prices at all (weekend / market holiday / API error),
+  // skip the snapshot rather than writing a $0 record that corrupts history.
+  if (Object.keys(priceMap).length === 0) {
+    console.log(`[snapshot] No price data from Polygon (market closed?) — skipping snapshot for user ${userId}`)
+    return null
   }
 
   let totalValue = 0
@@ -851,6 +863,103 @@ async function takeSnapshot(userId) {
     [userId, today, totalValue.toFixed(2), breakdown]
   )
   return { date: today, total_value: totalValue, breakdown }
+}
+
+/**
+ * backfillSnapshots(userId)
+ * Called fire-and-forget on every login.
+ *
+ * Finds the user's latest snapshot date, then fetches actual historical
+ * closing prices from Polygon for every missing trading day up to yesterday,
+ * and inserts retroactive snapshots so the history chart stays accurate
+ * even when the user hasn't logged in for a while.
+ *
+ * Uses DO NOTHING so existing snapshots are never overwritten.
+ */
+async function backfillSnapshots(userId) {
+  try {
+    const apiKey = process.env.POLYGON_API_KEY
+    if (!apiKey) return
+
+    const { rows: holdings } = await pool.query(
+      'SELECT symbol, shares FROM portfolio WHERE user_id = $1',
+      [userId]
+    )
+    if (!holdings.length) return
+
+    // Find the most recent snapshot date
+    const { rows: latest } = await pool.query(
+      'SELECT MAX(date) AS latest FROM portfolio_snapshots WHERE user_id = $1',
+      [userId]
+    )
+    const latestDate = latest[0]?.latest   // null if no snapshots yet
+    if (!latestDate) return               // nothing to backfill from
+
+    // Yesterday in YYYY-MM-DD (we don't backfill today — takeSnapshot handles that)
+    const yesterday = new Date(Date.now() - 864e5).toISOString().split('T')[0]
+    if (latestDate >= yesterday) return   // already up to date
+
+    // Use SPY aggregates to get the exact list of trading days in the gap
+    const spyRes = await fetch(
+      `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${latestDate}/${yesterday}` +
+      `?adjusted=true&sort=asc&limit=365&apiKey=${apiKey}`
+    )
+    const spyData = await spyRes.json()
+    const missingDays = (spyData.results ?? [])
+      .map(r => new Date(r.t).toISOString().split('T')[0])
+      .filter(d => d > latestDate)        // exclude the latestDate itself
+
+    if (!missingDays.length) return
+
+    // Fetch historical closes for each holding symbol
+    const symbols = holdings.map(h => h.symbol)
+    const pricesByDate = {}              // { 'YYYY-MM-DD': { SYMBOL: closePrice } }
+
+    for (const symbol of symbols) {
+      const r = await fetch(
+        `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${latestDate}/${yesterday}` +
+        `?adjusted=true&sort=asc&limit=365&apiKey=${apiKey}`
+      )
+      const d = await r.json()
+      for (const bar of (d.results ?? [])) {
+        const date = new Date(bar.t).toISOString().split('T')[0]
+        if (!pricesByDate[date]) pricesByDate[date] = {}
+        pricesByDate[date][symbol] = bar.c
+      }
+    }
+
+    // Insert a snapshot for each missing trading day
+    let filled = 0
+    for (const date of missingDays) {
+      const prices = pricesByDate[date]
+      if (!prices) continue
+
+      let totalValue = 0
+      const breakdown = {}
+      for (const h of holdings) {
+        const price = prices[h.symbol] ?? 0
+        const value = parseFloat(h.shares) * price
+        totalValue += value
+        breakdown[h.symbol] = { shares: parseFloat(h.shares), price, value }
+      }
+      if (totalValue === 0) continue      // no price data for this day
+
+      await pool.query(
+        `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [userId, date, totalValue.toFixed(2), breakdown]
+      )
+      filled++
+    }
+
+    if (filled > 0) {
+      console.log(`[backfill] Filled ${filled} missing day(s) for user ${userId}`)
+    }
+  } catch (err) {
+    // backfill is best-effort — never let it crash login
+    console.warn('[backfill] Error:', err.message)
+  }
 }
 
 // POST /api/portfolio/snapshot — take today's snapshot (any logged-in user)

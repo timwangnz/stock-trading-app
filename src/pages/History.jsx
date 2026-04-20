@@ -159,12 +159,18 @@ export default function History() {
         rows.push({ date, portfolioValue, spyClose: spyMap[date] ?? null })
       }
 
-      // ── Normalise SPY to portfolio's starting value ────────────
-      const startValue = rows.find(r => r.portfolioValue > 0)?.portfolioValue ?? 1
-      const spyStart   = rows.find(r => r.spyClose != null)?.spyClose ?? 1
+      // ── Trim leading zeros (dates before the first snapshot / purchase) ──
+      // Without this, the chart shows a flat $0 line for every day before
+      // the user's first recorded portfolio value, which looks wrong.
+      const firstRealIdx = rows.findIndex(r => r.portfolioValue > 0)
+      const trimmedRows  = firstRealIdx >= 0 ? rows.slice(firstRealIdx) : rows
 
-      const enriched = rows.map((r, i) => {
-        const prev         = i > 0 ? rows[i - 1].portfolioValue : r.portfolioValue
+      // ── Normalise SPY to portfolio's starting value ────────────
+      const startValue = trimmedRows[0]?.portfolioValue ?? 1
+      const spyStart   = trimmedRows.find(r => r.spyClose != null)?.spyClose ?? 1
+
+      const enriched = trimmedRows.map((r, i) => {
+        const prev         = i > 0 ? trimmedRows[i - 1].portfolioValue : r.portfolioValue
         const dailyPnL     = r.portfolioValue - prev
         const dailyPnLPct  = prev > 0 ? (dailyPnL / prev) * 100 : 0
         const spyValue     = r.spyClose != null ? (r.spyClose / spyStart) * startValue : null
