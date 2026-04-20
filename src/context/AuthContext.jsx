@@ -17,19 +17,21 @@ import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthT
 
 const AuthContext = createContext(null)
 
-const TOKEN_KEY = 'tradebuddy_token'
-const USER_KEY  = 'tradebuddy_user'
+const TOKEN_KEY     = 'tradebuddy_token'
+const USER_KEY      = 'tradebuddy_user'
+const VIEW_MODE_KEY = 'tradebuddy_view_mode'
 
 // ── Role helpers (mirrors server/rbac.js) ─────────────────────
-const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'admin']
+const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'teacher', 'admin']
 
 function hasRole(userRole, requiredRole) {
   return ROLE_HIERARCHY.indexOf(userRole) >= ROLE_HIERARCHY.indexOf(requiredRole)
 }
 
 export function AuthProvider({ children }) {
-  const [user,    setUser]    = useState(null)
-  const [loading, setLoading] = useState(true)  // true while restoring session
+  const [user,     setUser]     = useState(null)
+  const [loading,  setLoading]  = useState(true)  // true while restoring session
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || 'teacher')
 
   // ── Restore session from localStorage on first load ──────────
   useEffect(() => {
@@ -85,6 +87,18 @@ export function AuthProvider({ children }) {
   }, [saveSession])
 
   /**
+   * Toggle between 'teacher' and 'student' view mode (teacher/admin only).
+   * Persisted in localStorage so it survives page refresh.
+   */
+  const toggleViewMode = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === 'teacher' ? 'student' : 'teacher'
+      localStorage.setItem(VIEW_MODE_KEY, next)
+      return next
+    })
+  }, [])
+
+  /**
    * Sign out — clears everything.
    */
   const logout = useCallback(() => {
@@ -106,10 +120,18 @@ export function AuthProvider({ children }) {
   const role       = user?.role ?? null
   const canTrade   = !!user && hasRole(role, 'user')      // buy/sell/watchlist changes
   const isAdmin    = !!user && hasRole(role, 'admin')     // admin panel access
+  const isTeacher  = role === 'teacher' || isAdmin        // teacher + admin can manage classes
   const isReadonly = !!user && !hasRole(role, 'user')     // view-only
 
+  // Effective view mode: only meaningful for teachers/admins; everyone else is always 'student'
+  const effectiveViewMode = isTeacher ? viewMode : 'student'
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, loginWithToken, signUp, signIn, logout, role, canTrade, isAdmin, isReadonly }}>
+    <AuthContext.Provider value={{
+      user, loading, login, loginWithToken, signUp, signIn, logout,
+      role, canTrade, isAdmin, isTeacher, isReadonly,
+      viewMode: effectiveViewMode, toggleViewMode,
+    }}>
       {children}
     </AuthContext.Provider>
   )

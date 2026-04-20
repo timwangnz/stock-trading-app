@@ -14,9 +14,10 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { Star, ArrowLeft, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react'
+import { Star, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
+import { fetchMyClasses, fetchRelatedStocks } from '../services/apiService'
 import { STOCKS } from '../data/mockData'
 import { useTheme } from '../context/ThemeContext'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
@@ -37,6 +38,119 @@ function ChartTooltip({ active, payload, label }) {
       <p className="text-muted mb-1">{label}</p>
       <p className="text-primary font-semibold">${d.close.toFixed(2)}</p>
       <p className="text-muted">Vol: {(d.volume / 1_000_000).toFixed(1)}M</p>
+    </div>
+  )
+}
+
+// ── Class Related Stocks widget ──────────────────────────────────
+function ClassRelatedStocks({ symbol }) {
+  const { dispatch } = useApp()
+  const [classes,  setClasses]  = useState([])
+  const [classId,  setClassId]  = useState(null)
+  const [related,  setRelated]  = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [empty,    setEmpty]    = useState(false)
+
+  // Load classes once
+  useEffect(() => {
+    fetchMyClasses()
+      .then(cls => {
+        setClasses(cls)
+        if (cls.length) setClassId(cls[0].class_id ?? cls[0].id)
+        else setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [])
+
+  // Load related stocks when class or symbol changes
+  useEffect(() => {
+    if (!classId) return
+    setLoading(true); setRelated([]); setEmpty(false)
+    fetchRelatedStocks(classId, symbol)
+      .then(data => {
+        setRelated(data)
+        setEmpty(data.length === 0)
+      })
+      .catch(() => setEmpty(true))
+      .finally(() => setLoading(false))
+  }, [classId, symbol])
+
+  // Don't render at all if user has no class
+  if (!loading && classes.length === 0) return null
+
+  const navigateToStock = (sym) => {
+    dispatch({ type: ACTIONS.VIEW_STOCK, payload: sym })
+  }
+
+  return (
+    <div className="bg-surface-card border border-border rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Users size={15} className="text-accent-blue" />
+          <p className="text-primary text-sm font-medium">
+            Classmates who hold {symbol} also hold
+          </p>
+        </div>
+
+        {classes.length > 1 && (
+          <select
+            value={classId ?? ''}
+            onChange={e => setClassId(Number(e.target.value))}
+            className="bg-surface-hover border border-border rounded-lg px-2.5 py-1 text-primary text-xs focus:outline-none focus:border-accent-blue">
+            {classes.map(c => (
+              <option key={c.class_id ?? c.id} value={c.class_id ?? c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {loading && (
+        <div className="flex gap-2 flex-wrap">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-10 w-20 rounded-xl bg-surface-hover animate-pulse" />
+          ))}
+        </div>
+      )}
+
+      {!loading && empty && (
+        <p className="text-muted text-sm">
+          No classmates hold {symbol} yet — be the first!
+        </p>
+      )}
+
+      {!loading && related.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {related.map(r => {
+            // Build avatar stack (max 3)
+            const avatars = (r.holders ?? []).slice(0, 3)
+            return (
+              <button
+                key={r.symbol}
+                onClick={() => navigateToStock(r.symbol)}
+                className="group flex items-center gap-2 bg-surface-hover hover:bg-accent-blue/10 border border-border hover:border-accent-blue/30 rounded-xl px-3 py-2 transition-colors"
+              >
+                {/* Micro avatar stack */}
+                <div className="flex -space-x-1.5">
+                  {avatars.map((h, i) => (
+                    h.avatar_url
+                      ? <img key={i} src={h.avatar_url} referrerPolicy="no-referrer"
+                          className="w-5 h-5 rounded-full border border-surface-card object-cover" alt="" />
+                      : <div key={i} className="w-5 h-5 rounded-full border border-surface-card bg-accent-blue/20 flex items-center justify-center text-accent-blue text-[8px] font-bold">
+                          {(h.name || '?')[0].toUpperCase()}
+                        </div>
+                  ))}
+                </div>
+                <span className="text-primary text-sm font-mono font-semibold group-hover:text-accent-blue transition-colors">
+                  {r.symbol}
+                </span>
+                <span className="text-muted text-xs">
+                  {r.holder_count} {r.holder_count === 1 ? 'holder' : 'holders'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -405,6 +519,10 @@ export default function StockDetail() {
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* ── Class related stocks ──────────────────────── */}
+      <ClassRelatedStocks symbol={symbol} />
+
     </div>
   )
 }

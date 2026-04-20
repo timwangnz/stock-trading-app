@@ -44,7 +44,7 @@ import { runTradingAgent } from './agent.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail } from './email.js'
 import marketRouter                    from './market.js'
-import { classRouter, leaderboardRouter } from './classes.js'
+import { classRouter, leaderboardRouter, groupRouter } from './classes.js'
 import { ideasRouter }                    from './ideas.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -495,6 +495,7 @@ app.use('/api/market',       authMiddleware, marketRouter)
 
 // ── Classroom, leaderboard, trading ideas ────────────────────────────────────
 app.use('/api/classes',      authMiddleware, classRouter)
+app.use('/api/groups',       authMiddleware, groupRouter)
 app.use('/api/leaderboard',  authMiddleware, leaderboardRouter)
 app.use('/api/ideas',        authMiddleware, ideasRouter)
 
@@ -751,7 +752,7 @@ app.get('/api/admin/users', adminOnly, async (_req, res) => {
 // Update a user's role
 app.put('/api/admin/users/:id/role', adminOnly, async (req, res) => {
   const { role } = req.body
-  const validRoles = ['admin', 'premium', 'user', 'readonly']
+  const validRoles = ['admin', 'teacher', 'premium', 'user', 'readonly']
   if (!validRoles.includes(role)) {
     return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` })
   }
@@ -1105,6 +1106,149 @@ app.get('/api/admin/audit', adminOnly, async (req, res) => {
       params
     )
     res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// All classes (admin overview)
+app.get('/api/admin/classes', adminOnly, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT c.id, c.name, c.school_name, c.state, c.ideas_public, c.created_at,
+              u.name AS teacher_name, u.email AS teacher_email,
+              COUNT(DISTINCT cm.user_id)::int AS member_count,
+              COUNT(DISTINCT ti.id)::int       AS idea_count
+       FROM classes c
+       LEFT JOIN users u         ON u.id = c.teacher_id
+       LEFT JOIN class_members cm ON cm.class_id = c.id
+       LEFT JOIN trading_ideas ti ON ti.class_id = c.id
+       GROUP BY c.id, u.name, u.email
+       ORDER BY c.created_at DESC`
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Teacher verification ─────────────────────────────────────────
+
+// Submit a teacher verification request
+app.post('/api/teacher/apply', async (req, res) => {
+  const { school_name, school_website, state, title } = req.body
+  if (!school_name || !state || !title) {
+    return res.status(400).json({ error: 'school_name, state, and title are required' })
+  }
+  const userId = req.user.id
+  try {
+    // Only allow one pending application at a time
+    const { rows: [existing] } = await pool.query(
+      `SELECT id, status FROM teacher_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    )
+    if (existing?.status === 'pending') {
+      return res.status(409).json({ error: 'You already have a pending application' })
+    }
+    if (existing?.status === 'approved') {
+      return res.status(409).json({ error: 'Your account is already approved as a teacher' })
+    }
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO teacher_verifications (user_id, school_name, school_website, state, title)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [userId, school_name, school_website || null, state, title]
+    )
+    res.json(row)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Get current user's own verification status
+app.get('/api/teacher/apply/status', async (req, res) => {
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT id, status, reject_reason, created_at, reviewed_at
+       FROM teacher_verifications WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.id]
+    )
+    res.json(row ?? null)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Admin: list all verification requests
+app.get('/api/admin/teacher-verifications', adminOnly, async (req, res) => {
+  const status = req.query.status ?? 'pending'
+  try {
+    const { rows } = await pool.query(
+      `SELECT tv.*, u.name AS user_name, u.email AS user_email, u.avatar_url,
+              r.name AS reviewer_name
+       FROM teacher_verifications tv
+       LEFT JOIN users u ON u.id = tv.user_id
+       LEFT JOIN users r ON r.id = tv.reviewed_by
+       WHERE ($1 = 'all' OR tv.status = $1)
+       ORDER BY tv.created_at DESC`,
+      [status]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Admin: approve a teacher verification
+app.put('/api/admin/teacher-verifications/:id/approve', adminOnly, async (req, res) => {
+  const { id } = req.params
+  try {
+    const { rows: [verif] } = await pool.query(
+      `UPDATE teacher_verifications
+       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW()
+       WHERE id = $2 RETURNING *`,
+      [req.user.id, id]
+    )
+    if (!verif) return res.status(404).json({ error: 'Application not found' })
+
+    // Promote user to teacher
+    await pool.query(`UPDATE users SET role = 'teacher' WHERE id = $1`, [verif.user_id])
+    audit(req.user.id, 'role_changed', { targetUserId: verif.user_id, from: 'user', to: 'teacher', via: 'teacher_verification' }, req)
+
+    // Send approval email (fire and forget)
+    const { rows: [user] } = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [verif.user_id])
+    const appUrl = process.env.APP_URL || 'https://tradebuddy.app'
+    import('./email.js').then(({ sendTeacherApprovedEmail }) => {
+      sendTeacherApprovedEmail({ to: user.email, name: user.name, appUrl }).catch(() => {})
+    })
+
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Admin: reject a teacher verification
+app.put('/api/admin/teacher-verifications/:id/reject', adminOnly, async (req, res) => {
+  const { id } = req.params
+  const { reason } = req.body
+  try {
+    const { rows: [verif] } = await pool.query(
+      `UPDATE teacher_verifications
+       SET status = 'rejected', reject_reason = $1, reviewed_by = $2, reviewed_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [reason ?? null, req.user.id, id]
+    )
+    if (!verif) return res.status(404).json({ error: 'Application not found' })
+
+    // Send rejection email (fire and forget)
+    const { rows: [user] } = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [verif.user_id])
+    const appUrl = process.env.APP_URL || 'https://tradebuddy.app'
+    import('./email.js').then(({ sendTeacherRejectedEmail }) => {
+      sendTeacherRejectedEmail({ to: user.email, name: user.name, reason, appUrl }).catch(() => {})
+    })
+
+    res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

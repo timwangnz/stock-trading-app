@@ -17,12 +17,12 @@ import StockDetail   from './pages/StockDetail'
 import AdminPanel    from './pages/AdminPanel'
 import History       from './pages/History'
 import Activity      from './pages/Activity'
-import About         from './pages/About'
 import Login         from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import Classroom     from './pages/Classroom'
 import Leaderboard   from './pages/Leaderboard'
 import Ideas         from './pages/Ideas'
+import Groups        from './pages/Groups'
 
 const PAGES = {
   dashboard:   Dashboard,
@@ -32,35 +32,25 @@ const PAGES = {
   admin:       AdminPanel,
   history:     History,
   activity:    Activity,
-  about:       About,
   classroom:   Classroom,
   leaderboard: Leaderboard,
   ideas:       Ideas,
+  groups:      Groups,
 }
 
 // Read URL params once at module load (before any re-renders strip them)
 const urlParams   = new URLSearchParams(window.location.search)
 const RESET_TOKEN = urlParams.get('reset_token')
-const SHOW_ABOUT  = urlParams.get('about') !== null
 const JOIN_TOKEN  = urlParams.get('join')
-if (RESET_TOKEN || SHOW_ABOUT || JOIN_TOKEN) window.history.replaceState({}, '', '/')
+if (RESET_TOKEN || JOIN_TOKEN) window.history.replaceState({}, '', '/')
 
 export default function App() {
   const { user, loading, isAdmin } = useAuth()
   const { state, dispatch }        = useApp()
   const [agentOpen, setAgentOpen]   = useState(false)
   const [resetToken, setResetToken] = useState(RESET_TOKEN)
-  const [showAbout, setShowAbout]   = useState(SHOW_ABOUT)
   const [joinToken, setJoinToken]   = useState(JOIN_TOKEN)
   const [joinMsg,   setJoinMsg]     = useState(null)
-
-  // If the user is already logged in and /?about was in the URL, navigate to About
-  useEffect(() => {
-    if (user && showAbout) {
-      dispatch({ type: ACTIONS.NAVIGATE, payload: 'about' })
-      setShowAbout(false)
-    }
-  }, [user, showAbout, dispatch])
 
   // Auto-join class when user is logged in and a join token is in the URL
   useEffect(() => {
@@ -87,27 +77,8 @@ export default function App() {
     return <ResetPassword token={resetToken} onDone={() => setResetToken(null)} />
   }
 
-  // Public About page — accessible without signing in
-  if (!user && showAbout) {
-    return (
-      <div className="min-h-screen bg-surface">
-        {/* Minimal header with sign-in button */}
-        <div className="border-b border-border px-6 py-3 flex items-center justify-between">
-          <span className="text-primary font-semibold text-sm">TradeBuddy</span>
-          <button
-            onClick={() => setShowAbout(false)}
-            className="text-sm bg-accent-blue hover:bg-accent-blue/80 text-white px-4 py-1.5 rounded-lg transition-colors font-medium"
-          >
-            Sign In
-          </button>
-        </div>
-        <About />
-      </div>
-    )
-  }
-
   // Not signed in → show login page
-  if (!user) return <Login onAbout={() => setShowAbout(true)} />
+  if (!user) return <Login />
 
   // Resolve page — block non-admins from reaching the admin panel
   const requestedPage = state.currentPage

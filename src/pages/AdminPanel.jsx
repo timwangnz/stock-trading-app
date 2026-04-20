@@ -13,13 +13,14 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Shield, ChevronDown, ChevronUp, RefreshCw,
   UserX, UserCheck, Check, X, Users, Lock, ClipboardList,
+  GraduationCap, Globe, Loader2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import clsx from 'clsx'
 
 // ── Constants ────────────────────────────────────────────────────
 
-const ROLES = ['admin', 'premium', 'user', 'readonly']
+const ROLES = ['admin', 'teacher', 'premium', 'user', 'readonly']
 
 const ROLE_META = {
   admin: {
@@ -28,6 +29,13 @@ const ROLE_META = {
     border:      'border-orange-400/20',
     badge:       'text-orange-400 bg-orange-400/10 border-orange-400/20',
     description: 'Full access + admin panel',
+  },
+  teacher: {
+    color:       'text-purple-400',
+    bg:          'bg-purple-400/10',
+    border:      'border-purple-400/20',
+    badge:       'text-purple-400 bg-purple-400/10 border-purple-400/20',
+    description: 'Create classes & invite students',
   },
   premium: {
     color:       'text-yellow-400',
@@ -54,9 +62,12 @@ const ROLE_META = {
 
 // Permission matrix rows
 const PERMISSION_ROWS = [
-  { label: 'View portfolio & watchlist',    roles: ['readonly', 'user', 'premium', 'admin'] },
-  { label: 'Edit portfolio (buy / sell)',   roles: ['user', 'premium', 'admin'] },
-  { label: 'Manage watchlist',             roles: ['user', 'premium', 'admin'] },
+  { label: 'View portfolio & watchlist',    roles: ['readonly', 'user', 'premium', 'teacher', 'admin'] },
+  { label: 'Edit portfolio (buy / sell)',   roles: ['user', 'premium', 'teacher', 'admin'] },
+  { label: 'Manage watchlist',             roles: ['user', 'premium', 'teacher', 'admin'] },
+  { label: 'Create & manage classes',      roles: ['teacher', 'admin'] },
+  { label: 'Send student invites',         roles: ['teacher', 'admin'] },
+  { label: 'View class rosters',           roles: ['teacher', 'admin'] },
   { label: "View any user's data",         roles: ['admin'] },
   { label: 'Change user roles',            roles: ['admin'] },
   { label: 'Disable / enable accounts',   roles: ['admin'] },
@@ -379,7 +390,7 @@ function PermissionsTab() {
       </p>
 
       {/* Role summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         {ROLES.map(role => {
           const meta = ROLE_META[role]
           return (
@@ -395,7 +406,7 @@ function PermissionsTab() {
       <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
 
         {/* Column headers */}
-        <div className="grid grid-cols-[1fr_repeat(4,_90px)] px-5 py-3 border-b border-border bg-surface/50">
+        <div className="grid grid-cols-[1fr_repeat(5,_80px)] px-5 py-3 border-b border-border bg-surface/50">
           <span className="text-muted text-xs font-medium uppercase tracking-wider">
             Permission
           </span>
@@ -414,7 +425,7 @@ function PermissionsTab() {
           <div
             key={perm.label}
             className={clsx(
-              'grid grid-cols-[1fr_repeat(4,_90px)] px-5 py-3 items-center transition-colors',
+              'grid grid-cols-[1fr_repeat(5,_80px)] px-5 py-3 items-center transition-colors',
               'hover:bg-surface-hover',
               idx % 2 === 1 && 'bg-surface/50',
             )}
@@ -435,7 +446,292 @@ function PermissionsTab() {
       {/* Role hierarchy note */}
       <div className="flex items-center gap-2 text-muted text-xs">
         <Shield size={11} />
-        Role hierarchy (highest → lowest): admin → premium → user → readonly
+        Role hierarchy (highest → lowest): admin → teacher → premium → user → readonly
+      </div>
+    </div>
+  )
+}
+
+// ── Classes Tab ──────────────────────────────────────────────────
+
+function TeacherApplicationsSection() {
+  const [applications, setApplications] = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [filter,       setFilter]       = useState('pending')
+  const [busy,         setBusy]         = useState({})
+  const [rejectModal,  setRejectModal]  = useState(null)  // { id, name }
+  const [rejectReason, setRejectReason] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await adminFetch(`/admin/teacher-verifications?status=${filter}`)
+      setApplications(data)
+    } catch (_) {}
+    finally { setLoading(false) }
+  }, [filter])
+
+  useEffect(() => { load() }, [load])
+
+  const handleApprove = async (id) => {
+    setBusy(b => ({ ...b, [id]: true }))
+    try {
+      await adminFetch(`/admin/teacher-verifications/${id}/approve`, { method: 'PUT' })
+      setApplications(prev => prev.filter(a => a.id !== id))
+    } catch (err) {
+      alert('Failed: ' + err.message)
+    } finally {
+      setBusy(b => ({ ...b, [id]: false }))
+    }
+  }
+
+  const handleReject = async () => {
+    const { id } = rejectModal
+    setBusy(b => ({ ...b, [id]: true }))
+    try {
+      await adminFetch(`/admin/teacher-verifications/${id}/reject`, {
+        method: 'PUT',
+        body: JSON.stringify({ reason: rejectReason }),
+      })
+      setApplications(prev => prev.filter(a => a.id !== id))
+      setRejectModal(null); setRejectReason('')
+    } catch (err) {
+      alert('Failed: ' + err.message)
+    } finally {
+      setBusy(b => ({ ...b, [id]: false }))
+    }
+  }
+
+  const FILTER_TABS = [
+    { key: 'pending',  label: 'Pending'  },
+    { key: 'approved', label: 'Approved' },
+    { key: 'rejected', label: 'Rejected' },
+    { key: 'all',      label: 'All'      },
+  ]
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-primary font-medium text-sm flex items-center gap-2">
+          <GraduationCap size={15} className="text-purple-400" />
+          Teacher Applications
+          {filter === 'pending' && applications.length > 0 && (
+            <span className="bg-purple-400 text-white text-xs rounded-full px-1.5 py-0.5 font-semibold">
+              {applications.length}
+            </span>
+          )}
+        </h3>
+        <div className="flex gap-1">
+          {FILTER_TABS.map(t => (
+            <button key={t.key} onClick={() => setFilter(t.key)}
+              className={clsx('text-xs px-2.5 py-1 rounded-md transition-colors',
+                filter === t.key ? 'bg-surface-card text-primary border border-border' : 'text-muted hover:text-primary')}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Loader2 size={18} className="animate-spin text-muted" /></div>
+      ) : applications.length === 0 ? (
+        <p className="text-muted text-xs text-center py-6">No {filter} applications.</p>
+      ) : (
+        <div className="bg-surface-card border border-border rounded-xl divide-y divide-border">
+          {applications.map(a => (
+            <div key={a.id} className="px-4 py-3 flex items-start gap-3">
+              {/* Avatar */}
+              <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 mt-0.5">
+                {a.avatar_url
+                  ? <img src={a.avatar_url} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt="" />
+                  : <div className="w-full h-full bg-purple-400/20 flex items-center justify-center text-purple-400 text-xs font-bold">
+                      {(a.user_name || '?')[0].toUpperCase()}
+                    </div>
+                }
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-primary text-sm font-medium">{a.user_name}</p>
+                  <p className="text-muted text-xs">{a.user_email}</p>
+                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full border font-medium',
+                    a.status === 'pending'  && 'text-accent-blue border-accent-blue/30 bg-accent-blue/10',
+                    a.status === 'approved' && 'text-gain border-gain/30 bg-gain/10',
+                    a.status === 'rejected' && 'text-loss border-loss/30 bg-loss/10',
+                  )}>{a.status}</span>
+                </div>
+                <p className="text-secondary text-xs mt-0.5">
+                  {a.title} · {a.school_name} · {a.state}
+                </p>
+                {a.school_website && (
+                  <a href={a.school_website} target="_blank" rel="noopener noreferrer"
+                    className="text-accent-blue text-xs hover:underline mt-0.5 inline-block">
+                    {a.school_website}
+                  </a>
+                )}
+                {a.reject_reason && (
+                  <p className="text-loss/70 text-xs mt-0.5">Reason: {a.reject_reason}</p>
+                )}
+                <p className="text-muted text-xs mt-0.5">
+                  Applied {new Date(a.created_at).toLocaleDateString()}
+                  {a.reviewed_at && ` · Reviewed ${new Date(a.reviewed_at).toLocaleDateString()} by ${a.reviewer_name}`}
+                </p>
+              </div>
+
+              {/* Actions (pending only) */}
+              {a.status === 'pending' && (
+                <div className="flex gap-1.5 shrink-0">
+                  <button
+                    disabled={busy[a.id]}
+                    onClick={() => handleApprove(a.id)}
+                    className="px-2.5 py-1 rounded-lg bg-gain/10 text-gain border border-gain/30 text-xs font-medium hover:bg-gain/20 disabled:opacity-40 transition-colors flex items-center gap-1">
+                    <Check size={11} /> Approve
+                  </button>
+                  <button
+                    disabled={busy[a.id]}
+                    onClick={() => { setRejectModal({ id: a.id, name: a.user_name }); setRejectReason('') }}
+                    className="px-2.5 py-1 rounded-lg bg-loss/10 text-loss border border-loss/30 text-xs font-medium hover:bg-loss/20 disabled:opacity-40 transition-colors flex items-center gap-1">
+                    <X size={11} /> Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reject modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-card border border-border rounded-2xl w-full max-w-sm p-5 space-y-4">
+            <h3 className="text-primary font-semibold text-sm">Reject {rejectModal.name}'s application</h3>
+            <div>
+              <label className="text-muted text-xs mb-1 block">Reason (optional — sent to applicant)</label>
+              <textarea
+                className="w-full h-24 bg-surface-hover border border-border rounded-lg px-3 py-2 text-primary text-sm focus:outline-none focus:border-accent-blue resize-none"
+                placeholder="e.g. We couldn't find this school in our database…"
+                value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setRejectModal(null)}
+                className="flex-1 px-3 py-2 rounded-lg border border-border text-secondary text-sm hover:bg-surface-hover">
+                Cancel
+              </button>
+              <button onClick={handleReject}
+                className="flex-1 px-3 py-2 rounded-lg bg-loss/80 hover:bg-loss text-white text-sm font-medium">
+                Confirm Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ClassesTab() {
+  const [classes, setClasses] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null)
+    try {
+      const data = await adminFetch('/admin/classes')
+      setClasses(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (error) return (
+    <div className="text-loss text-sm bg-loss/10 border border-loss/20 rounded-xl px-4 py-3">{error}</div>
+  )
+
+  return (
+    <div className="space-y-8">
+
+      {/* Teacher Applications queue */}
+      <TeacherApplicationsSection />
+
+      <hr className="border-border" />
+
+      {/* All classes */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-primary font-medium text-sm">All Classes</h3>
+          <button onClick={load}
+            className="flex items-center gap-1.5 text-muted hover:text-primary text-xs transition-colors">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-muted" /></div>
+        ) : classes.length === 0 ? (
+          <div className="text-center py-8 space-y-2">
+            <GraduationCap size={32} className="text-muted mx-auto" />
+            <p className="text-muted text-sm">No classes created yet.</p>
+          </div>
+        ) : (
+          <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted text-xs">
+                  <th className="text-left px-4 py-3">Class</th>
+                  <th className="text-left px-4 py-3 hidden md:table-cell">Teacher</th>
+                  <th className="text-left px-4 py-3 hidden lg:table-cell">School</th>
+                  <th className="text-center px-4 py-3">Students</th>
+                  <th className="text-center px-4 py-3">Ideas</th>
+                  <th className="text-center px-4 py-3">Visibility</th>
+                  <th className="text-right px-4 py-3 hidden sm:table-cell">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {classes.map(cls => (
+                  <tr key={cls.id} className="hover:bg-surface-hover transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="text-primary font-medium">{cls.name}</p>
+                      <p className="text-muted text-xs">{cls.state}</p>
+                    </td>
+                    <td className="px-4 py-3 text-secondary hidden md:table-cell">
+                      <p>{cls.teacher_name || '—'}</p>
+                      <p className="text-muted text-xs">{cls.teacher_email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-secondary text-xs hidden lg:table-cell">
+                      {cls.school_name}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="text-primary font-medium">{cls.member_count ?? 0}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="text-secondary">{cls.idea_count ?? 0}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {cls.ideas_public
+                        ? <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-gain/10 text-gain border border-gain/30">
+                            <Globe size={8} /> Public
+                          </span>
+                        : <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-surface-hover text-muted border border-border">
+                            <Lock size={8} /> Private
+                          </span>
+                      }
+                    </td>
+                    <td className="px-4 py-3 text-right text-muted text-xs hidden sm:table-cell">
+                      {new Date(cls.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -598,8 +894,9 @@ function AuditTab({ users }) {
 // ── Main AdminPanel ──────────────────────────────────────────────
 
 const TABS = [
-  { key: 'users',       label: 'Users',       Icon: Users        },
-  { key: 'permissions', label: 'Permissions', Icon: Lock         },
+  { key: 'users',       label: 'Users',       Icon: Users         },
+  { key: 'classes',     label: 'Classes',     Icon: GraduationCap },
+  { key: 'permissions', label: 'Permissions', Icon: Lock          },
   { key: 'audit',       label: 'Audit Log',   Icon: ClipboardList },
 ]
 
@@ -724,6 +1021,7 @@ export default function AdminPanel() {
         />
       )}
 
+      {activeTab === 'classes'     && <ClassesTab />}
       {activeTab === 'permissions' && <PermissionsTab />}
       {activeTab === 'audit'       && <AuditTab users={users} />}
     </div>

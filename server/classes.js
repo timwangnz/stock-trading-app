@@ -12,8 +12,17 @@ import { sendClassInviteEmail } from './email.js'
 
 export const classRouter      = Router()
 export const leaderboardRouter = Router()
+export const groupRouter       = Router()
 
-// ── Helpers ───────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────
+
+/** Generate a short readable join code e.g. "BULL-7X3K" */
+function makeJoinCode() {
+  const words  = ['BULL','BEAR','HAWK','WOLF','LION','APEX','PEAK','RISE','BOLD','EDGE']
+  const word   = words[Math.floor(Math.random() * words.length)]
+  const suffix = crypto.randomBytes(2).toString('hex').toUpperCase()
+  return `${word}-${suffix}`
+}
 
 /** Resolve the user's latest portfolio value (from snapshots or 0). */
 async function currentPortfolioValue(userId) {
@@ -93,7 +102,8 @@ classRouter.get('/mine', async (req, res) => {
   }
 })
 
-// GET /api/classes/:id — class detail + member list
+// GET /api/classes/:id — class detail + enriched member list
+// Returns per-member: trade_count, holdings_count, last_active, idea_count
 classRouter.get('/:id', async (req, res) => {
   try {
     const { rows: cls } = await pool.query('SELECT * FROM classes WHERE id = $1', [req.params.id])
@@ -106,14 +116,90 @@ classRouter.get('/:id', async (req, res) => {
     }
 
     const { rows: members } = await pool.query(
-      `SELECT u.id, u.name, u.email, u.avatar_url, cm.joined_at, cm.base_value
+      `SELECT
+         u.id, u.name, u.email, u.avatar_url,
+         cm.joined_at, cm.base_value,
+         COALESCE(stats.trade_count, 0)      AS trade_count,
+         COALESCE(holdings.holdings_count, 0) AS holdings_count,
+         COALESCE(ideas.idea_count, 0)       AS idea_count,
+         stats.last_active
        FROM class_members cm
        JOIN users u ON u.id = cm.user_id
+       LEFT JOIN (
+         SELECT
+           user_id,
+           COUNT(*)                                        AS trade_count,
+           MAX(created_at)                                 AS last_active
+         FROM audit_log
+         WHERE action IN ('buy','sell','remove_holding')
+         GROUP BY user_id
+       ) stats ON stats.user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, COUNT(*) AS holdings_count
+         FROM portfolio
+         GROUP BY user_id
+       ) holdings ON holdings.user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, COUNT(*) AS idea_count
+         FROM trading_ideas
+         WHERE class_id = $1
+         GROUP BY user_id
+       ) ideas ON ideas.user_id = u.id
        WHERE cm.class_id = $1
        ORDER BY cm.joined_at ASC`,
       [req.params.id]
     )
     res.json({ ...c, members })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/classes/:id/members/:userId — student drill-down (teacher/admin only)
+// Returns the student's portfolio holdings + recent trade activity
+classRouter.get('/:id/members/:userId', async (req, res) => {
+  try {
+    const classId = parseInt(req.params.id)
+    const { userId } = req.params
+
+    // Verify class exists and requester is teacher/admin
+    const { rows: cls } = await pool.query('SELECT * FROM classes WHERE id = $1', [classId])
+    if (!cls.length) return res.status(404).json({ error: 'Class not found' })
+    if (cls[0].teacher_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+
+    // Verify student is actually in the class
+    const { rows: membership } = await pool.query(
+      'SELECT * FROM class_members WHERE class_id = $1 AND user_id = $2',
+      [classId, userId]
+    )
+    if (!membership.length) return res.status(404).json({ error: 'Student not in class' })
+
+    // Portfolio holdings
+    const { rows: holdings } = await pool.query(
+      `SELECT symbol, shares, avg_cost, updated_at
+       FROM portfolio WHERE user_id = $1
+       ORDER BY symbol ASC`,
+      [userId]
+    )
+
+    // Recent trade activity (last 50)
+    const { rows: activity } = await pool.query(
+      `SELECT id, action, details, created_at
+       FROM audit_log
+       WHERE user_id = $1 AND action IN ('buy','sell','remove_holding')
+       ORDER BY created_at DESC LIMIT 50`,
+      [userId]
+    )
+
+    // Student profile
+    const { rows: user } = await pool.query(
+      'SELECT id, name, email, avatar_url FROM users WHERE id = $1',
+      [userId]
+    )
+
+    res.json({ student: user[0], holdings, activity })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -331,6 +417,255 @@ leaderboardRouter.get('/national', async (req, res) => {
        JOIN classes c ON c.id = cm.class_id`
     )
     res.json(await buildLeaderboard(rows))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Related stocks ────────────────────────────────────────────────
+
+// GET /api/classes/:id/related-stocks?symbol=AAPL
+// Returns stocks most commonly co-held by class members who also hold :symbol.
+// Accessible to any class member, teacher, or admin.
+classRouter.get('/:id/related-stocks', async (req, res) => {
+  const classId = parseInt(req.params.id)
+  const symbol  = (req.query.symbol ?? '').toUpperCase()
+  const userId  = req.user.id
+
+  if (!symbol) return res.status(400).json({ error: 'symbol query param required' })
+
+  try {
+    // Access check
+    const { rows: access } = await pool.query(
+      `SELECT 1 FROM classes c
+       LEFT JOIN class_members cm ON cm.class_id = c.id AND cm.user_id = $1
+       WHERE c.id = $2 AND (c.teacher_id = $1 OR $3 = 'admin' OR cm.user_id IS NOT NULL)`,
+      [userId, classId, req.user.role]
+    )
+    if (!access.length) return res.status(403).json({ error: 'Access denied' })
+
+    // Find symbols co-held by classmates who hold :symbol
+    const { rows } = await pool.query(
+      `SELECT p2.symbol,
+              COUNT(DISTINCT p2.user_id)::int AS holder_count,
+              json_agg(
+                json_build_object('name', u.name, 'avatar_url', u.avatar_url)
+                ORDER BY u.name
+              ) AS holders
+       FROM portfolio p1
+       JOIN class_members cm ON cm.user_id = p1.user_id AND cm.class_id = $1
+       JOIN portfolio p2     ON p2.user_id = p1.user_id AND p2.symbol != $2
+       JOIN users u           ON u.id = p2.user_id
+       WHERE p1.symbol = $2
+       GROUP BY p2.symbol
+       ORDER BY holder_count DESC, p2.symbol
+       LIMIT 12`,
+      [classId, symbol]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Class activity feed ───────────────────────────────────────────
+
+// GET /api/classes/:id/activity — audit entries for all class members
+// Accessible to: teacher of the class, admin, or any class member
+classRouter.get('/:id/activity', async (req, res) => {
+  const classId = parseInt(req.params.id)
+  const limit   = Math.min(parseInt(req.query.limit  ?? 100), 500)
+  const offset  = parseInt(req.query.offset ?? 0)
+  const userId  = req.user.id
+
+  try {
+    // Check access: must be teacher, admin, or a member
+    const { rows: access } = await pool.query(
+      `SELECT 1 FROM classes c
+       LEFT JOIN class_members cm ON cm.class_id = c.id AND cm.user_id = $1
+       WHERE c.id = $2 AND (c.teacher_id = $1 OR $3 = 'admin' OR cm.user_id IS NOT NULL)`,
+      [userId, classId, req.user.role]
+    )
+    if (!access.length) return res.status(403).json({ error: 'Access denied' })
+
+    // Fetch trade/watchlist actions for all class members
+    const { rows } = await pool.query(
+      `SELECT a.id, a.user_id, a.action, a.details, a.created_at,
+              u.name AS user_name, u.avatar_url
+       FROM audit_log a
+       JOIN class_members cm ON cm.user_id = a.user_id AND cm.class_id = $1
+       JOIN users u ON u.id = a.user_id
+       WHERE a.action IN ('buy','sell','add_holding','remove_holding',
+                          'add_watchlist','remove_watchlist',
+                          'agent_buy','agent_sell','agent_remove')
+       ORDER BY a.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [classId, limit, offset]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Groups ────────────────────────────────────────────────────────
+// Any authenticated user can create a group.
+// Groups are open: join by code, no email invite required.
+
+// POST /api/groups — create a new peer group
+groupRouter.post('/', async (req, res) => {
+  const { name, description, start_balance = 100000 } = req.body
+  if (!name) return res.status(400).json({ error: 'name is required' })
+
+  // Generate a unique join code (retry on collision)
+  let join_code, attempts = 0
+  while (attempts < 5) {
+    const candidate = makeJoinCode()
+    const { rows } = await pool.query('SELECT 1 FROM classes WHERE join_code = $1', [candidate])
+    if (!rows.length) { join_code = candidate; break }
+    attempts++
+  }
+  if (!join_code) return res.status(500).json({ error: 'Could not generate a unique join code' })
+
+  try {
+    const { rows: [group] } = await pool.query(
+      `INSERT INTO classes (name, teacher_id, type, join_code, school_name, state, start_balance, description, ideas_public)
+       VALUES ($1, $2, 'group', $3, '', '', $4, $5, true)
+       RETURNING *`,
+      [name, req.user.id, join_code, start_balance, description || null]
+    )
+    // Creator auto-joins as a member
+    const baseValue = await currentPortfolioValue(req.user.id)
+    await pool.query(
+      `INSERT INTO class_members (class_id, user_id, base_value) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [group.id, req.user.id, baseValue]
+    )
+    res.status(201).json({ ...group, member_count: 1 })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/groups/mine — groups the current user belongs to
+groupRouter.get('/mine', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT c.*, cm.joined_at, cm.base_value,
+              u.name AS creator_name,
+              (SELECT COUNT(*) FROM class_members WHERE class_id = c.id)::int AS member_count
+       FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       JOIN users   u ON u.id = c.teacher_id
+       WHERE cm.user_id = $1 AND c.type = 'group'
+       ORDER BY cm.joined_at DESC`,
+      [req.user.id]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/groups/:id — group detail + leaderboard
+groupRouter.get('/:id', async (req, res) => {
+  try {
+    const { rows: [group] } = await pool.query(
+      `SELECT c.*,
+              u.name AS creator_name,
+              (SELECT COUNT(*) FROM class_members WHERE class_id = c.id)::int AS member_count
+       FROM classes c
+       JOIN users u ON u.id = c.teacher_id
+       WHERE c.id = $1 AND c.type = 'group'`,
+      [req.params.id]
+    )
+    if (!group) return res.status(404).json({ error: 'Group not found' })
+
+    // Check user is a member
+    const { rows: [member] } = await pool.query(
+      'SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    )
+    if (!member && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You are not a member of this group' })
+    }
+    res.json(group)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/groups/join/:code — join by code (open, no token expiry)
+groupRouter.post('/join/:code', async (req, res) => {
+  const code = req.params.code.toUpperCase()
+  try {
+    const { rows: [group] } = await pool.query(
+      `SELECT * FROM classes WHERE join_code = $1 AND type = 'group'`,
+      [code]
+    )
+    if (!group) return res.status(404).json({ error: 'Group not found — check the code and try again' })
+
+    // Already a member?
+    const { rows: [existing] } = await pool.query(
+      'SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2',
+      [group.id, req.user.id]
+    )
+    if (existing) return res.status(400).json({ error: 'You are already in this group' })
+
+    const baseValue = await currentPortfolioValue(req.user.id)
+    await pool.query(
+      `INSERT INTO class_members (class_id, user_id, base_value) VALUES ($1, $2, $3)`,
+      [group.id, req.user.id, baseValue]
+    )
+    res.json({ group_id: group.id, group_name: group.name, join_code: group.join_code })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/groups/:id/leaderboard — ranked by % return
+groupRouter.get('/:id/leaderboard', async (req, res) => {
+  try {
+    const { rows: members } = await pool.query(
+      `SELECT cm.user_id, cm.base_value,
+              u.name, u.avatar_url
+       FROM class_members cm
+       JOIN users u ON u.id = cm.user_id
+       WHERE cm.class_id = $1`,
+      [req.params.id]
+    )
+    res.json(await buildLeaderboard(members))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/groups/:id/activity — trade activity for group members
+groupRouter.get('/:id/activity', async (req, res) => {
+  const limit  = Math.min(parseInt(req.query.limit  ?? 100), 500)
+  const offset = parseInt(req.query.offset ?? 0)
+  try {
+    const { rows: [member] } = await pool.query(
+      `SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    )
+    const isAdmin = req.user.role === 'admin'
+    if (!member && !isAdmin) return res.status(403).json({ error: 'Access denied' })
+
+    const { rows } = await pool.query(
+      `SELECT a.id, a.user_id, a.action, a.details, a.created_at,
+              u.name AS user_name, u.avatar_url
+       FROM audit_log a
+       JOIN class_members cm ON cm.user_id = a.user_id AND cm.class_id = $1
+       JOIN users u ON u.id = a.user_id
+       WHERE a.action IN ('buy','sell','add_holding','remove_holding',
+                          'add_watchlist','remove_watchlist',
+                          'agent_buy','agent_sell','agent_remove')
+       ORDER BY a.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [req.params.id, limit, offset]
+    )
+    res.json(rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

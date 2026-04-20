@@ -5,8 +5,21 @@
  * Tool definitions are kept in Anthropic format; llm.js converts them.
  */
 
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
 import pool from './db.js'
 import { callLLM } from './llm.js'
+
+// Load the user guide once at startup so the agent can answer UI how-to questions
+const __dir      = dirname(fileURLToPath(import.meta.url))
+const USER_GUIDE = (() => {
+  try {
+    return readFileSync(join(__dir, '../TradeBuddy-User-Guide.md'), 'utf8')
+  } catch {
+    return '' // guide missing — agent still works without it
+  }
+})()
 
 // ── Tool definitions (Anthropic format — llm.js converts for other providers) ──
 
@@ -125,12 +138,12 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
         .join('\n')
 
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
-Help the user manage their simulated portfolio using the tools provided.
+Help the user manage their simulated portfolio using the tools provided, and answer questions about how to use the app.
 
 Current portfolio:
 ${portfolioText}
 
-Guidelines:
+Trade execution guidelines:
 - Use execute_buy when the user wants to purchase shares
 - Use execute_sell when the user wants to sell a specific number of shares
 - Use remove_holding when the user says "remove", "close", "exit", or "sell all" a position
@@ -138,7 +151,10 @@ Guidelines:
 - If no price is given for a buy, make a reasonable estimate based on well-known stocks and note it in the reasoning
 - Always use UPPERCASE ticker symbols
 - For questions or analysis (no trade), respond conversationally with no tool call
-- Keep text responses to 1-2 sentences`
+- Keep text responses to 1-2 sentences
+
+When the user asks how to do something in the app, answer using the guide below.
+${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
 
   const { text, toolName, toolInput } = await callLLM(
     {

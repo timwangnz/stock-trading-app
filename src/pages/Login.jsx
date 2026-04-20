@@ -257,7 +257,7 @@ function GoogleSignInButton({ onSuccess, onError }) {
 const HAS_GOOGLE = !!import.meta.env.VITE_GOOGLE_CLIENT_ID
 
 // ── Main Login page ─────────────────────────────────────────────
-export default function Login({ onAbout }) {
+export default function Login() {
   const { loginWithToken }      = useAuth()
   const [tab, setTab]           = useState(HAS_GOOGLE ? 'google' : 'email')
   const [error, setError]       = useState(null)
@@ -333,11 +333,6 @@ export default function Login({ onAbout }) {
       <p className="text-faint text-xs">
         Your data is private and tied to your account.
       </p>
-
-      <button onClick={onAbout}
-        className="text-muted text-xs hover:text-primary transition-colors">
-        Learn more about TradeBuddy →
-      </button>
     </div>
   )
 }

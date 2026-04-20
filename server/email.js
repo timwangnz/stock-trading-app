@@ -40,6 +40,59 @@ export async function sendClassInviteEmail({ to, className, schoolName, teacherN
   })
 }
 
+export async function sendTeacherApprovedEmail({ to, name, appUrl }) {
+  await resend.emails.send({
+    from:    FROM,
+    to,
+    subject: '🎉 Your TradeBuddy teacher account is approved!',
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+        <h2 style="color:#1a1a1a;margin-bottom:8px">You're verified! 🎓</h2>
+        <p style="color:#555;margin-bottom:24px">
+          Hi ${name || 'there'},<br/><br/>
+          Great news — your teacher account on TradeBuddy has been verified.
+          You can now create classes, invite students, and manage your roster.
+        </p>
+        <a href="${appUrl}"
+           style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
+                  padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">
+          Open TradeBuddy
+        </a>
+        <p style="color:#999;font-size:12px;margin-top:24px">
+          Head to <strong>My Classes</strong> in the sidebar to get started.
+        </p>
+      </div>
+    `,
+  })
+}
+
+export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
+  await resend.emails.send({
+    from:    FROM,
+    to,
+    subject: 'TradeBuddy teacher application update',
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+        <h2 style="color:#1a1a1a;margin-bottom:8px">Application update</h2>
+        <p style="color:#555;margin-bottom:16px">
+          Hi ${name || 'there'},<br/><br/>
+          We weren't able to verify your teacher application at this time.
+        </p>
+        ${reason ? `<p style="color:#555;margin-bottom:24px"><strong>Reason:</strong> ${reason}</p>` : ''}
+        <p style="color:#555;margin-bottom:24px">
+          If you think this is an error, please reply to this email with your school's
+          official website or staff directory link and we'll take another look.
+        </p>
+        <a href="${appUrl}"
+           style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
+                  padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">
+          Open TradeBuddy
+        </a>
+      </div>
+    `,
+  })
+}
+
 export async function sendPasswordResetEmail({ to, name, resetUrl }) {
   await resend.emails.send({
     from:    FROM,

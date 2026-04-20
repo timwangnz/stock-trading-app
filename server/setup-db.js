@@ -162,25 +162,61 @@ async function setup() {
   console.log('✅ Table "password_reset_tokens" ready')
 
   // ── classes ───────────────────────────────────────────────────
-  // A classroom created by a teacher. Students join via email invite.
-  // ideas_public: when true, trading ideas are visible outside the class.
+  // type='class': teacher-led, requires school info, invite-only.
+  // type='group': peer-created, open join via join_code, no school required.
   await client.query(`
     CREATE TABLE IF NOT EXISTS classes (
       id             SERIAL        PRIMARY KEY,
       name           VARCHAR(100)  NOT NULL,
       teacher_id     VARCHAR(50)   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      school_name    VARCHAR(200)  NOT NULL,
-      state          VARCHAR(100)  NOT NULL,
+      type           VARCHAR(10)   NOT NULL DEFAULT 'class'
+                     CHECK (type IN ('class', 'group')),
+      join_code      VARCHAR(20)   UNIQUE,
+      school_name    VARCHAR(200)  NOT NULL DEFAULT '',
+      state          VARCHAR(100)  NOT NULL DEFAULT '',
       country        VARCHAR(100)  NOT NULL DEFAULT 'US',
       start_balance  NUMERIC(15,2) NOT NULL DEFAULT 100000,
       start_date     DATE          NOT NULL DEFAULT CURRENT_DATE,
       end_date       DATE          NULL,
       ideas_public   BOOLEAN       NOT NULL DEFAULT FALSE,
+      description    TEXT,
       created_at     TIMESTAMPTZ   DEFAULT NOW()
     )
   `)
-  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes (teacher_id)`)
-  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_state   ON classes (state)`)
+  // ── Migrate existing classes table (add columns introduced after initial deploy) ──
+  await client.query(`
+    ALTER TABLE classes
+      ADD COLUMN IF NOT EXISTS type        VARCHAR(10)  NOT NULL DEFAULT 'class',
+      ADD COLUMN IF NOT EXISTS join_code   VARCHAR(20)  NULL,
+      ADD COLUMN IF NOT EXISTS description TEXT         NULL
+  `)
+  // Add CHECK constraint on type if it doesn't already exist
+  await client.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'classes_type_check' AND conrelid = 'classes'::regclass
+      ) THEN
+        ALTER TABLE classes ADD CONSTRAINT classes_type_check
+          CHECK (type IN ('class', 'group'));
+      END IF;
+    END $$
+  `)
+  // Add UNIQUE constraint on join_code if it doesn't already exist
+  await client.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'classes_join_code_key' AND conrelid = 'classes'::regclass
+      ) THEN
+        ALTER TABLE classes ADD CONSTRAINT classes_join_code_key UNIQUE (join_code);
+      END IF;
+    END $$
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_teacher   ON classes (teacher_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_state     ON classes (state)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_type      ON classes (type)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_join_code ON classes (join_code)`)
   console.log('✅ Table "classes" ready')
 
   // ── class_members ─────────────────────────────────────────────
@@ -253,6 +289,29 @@ async function setup() {
     )
   `)
   console.log('✅ Table "idea_reactions" ready')
+
+  // ── teacher_verifications ─────────────────────────────────────
+  // Stores teacher self-registration requests. Admin approves/rejects.
+  // status: pending → approved | rejected
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS teacher_verifications (
+      id             BIGSERIAL    PRIMARY KEY,
+      user_id        VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      school_name    VARCHAR(255) NOT NULL,
+      school_website VARCHAR(500),
+      state          VARCHAR(100) NOT NULL,
+      title          VARCHAR(100) NOT NULL,
+      status         VARCHAR(20)  NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'approved', 'rejected')),
+      reject_reason  TEXT,
+      reviewed_by    VARCHAR(50)  REFERENCES users(id),
+      reviewed_at    TIMESTAMPTZ,
+      created_at     TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_verif_user   ON teacher_verifications (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_verif_status ON teacher_verifications (status)`)
+  console.log('✅ Table "teacher_verifications" ready')
 
   await client.end()
   console.log('\n🎉 Database setup complete!')

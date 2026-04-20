@@ -134,6 +134,10 @@ export function fetchClassDetail(id) {
   return request('GET', `/classes/${id}`)
 }
 
+export function fetchStudentDetail(classId, userId) {
+  return request('GET', `/classes/${classId}/members/${userId}`)
+}
+
 export function updateClass(id, data) {
   return request('PUT', `/classes/${id}`, data)
 }
@@ -180,4 +184,58 @@ export function toggleIdeaLike(ideaId) {
 
 export function deleteIdea(ideaId) {
   return request('DELETE', `/ideas/${ideaId}`)
+}
+
+// ── Teacher verification ──────────────────────────────────────────
+export function fetchClassActivity(classId, { limit = 100, offset = 0 } = {}) {
+  return request('GET', `/classes/${classId}/activity?limit=${limit}&offset=${offset}`)
+}
+
+export function fetchRelatedStocks(classId, symbol) {
+  return request('GET', `/classes/${classId}/related-stocks?symbol=${encodeURIComponent(symbol)}`)
+}
+
+// ── Groups ────────────────────────────────────────────────────────
+export function createGroup(data) {
+  return request('POST', '/groups', data)
+}
+
+export function fetchMyGroups() {
+  return request('GET', '/groups/mine')
+}
+
+export function fetchGroupDetail(id) {
+  return request('GET', `/groups/${id}`)
+}
+
+export function joinGroupByCode(code) {
+  return request('POST', `/groups/join/${encodeURIComponent(code.trim().toUpperCase())}`)
+}
+
+export function fetchGroupLeaderboard(id) {
+  return request('GET', `/groups/${id}/leaderboard`)
+}
+
+export function fetchGroupActivity(id, { limit = 100, offset = 0 } = {}) {
+  return request('GET', `/groups/${id}/activity?limit=${limit}&offset=${offset}`)
+}
+
+export function applyForTeacher(data) {
+  return request('POST', '/teacher/apply', data)
+}
+
+export function fetchTeacherApplicationStatus() {
+  return request('GET', '/teacher/apply/status')
+}
+
+export function fetchTeacherVerifications(status = 'pending') {
+  return request('GET', `/admin/teacher-verifications?status=${status}`)
+}
+
+export function approveTeacherVerification(id) {
+  return request('PUT', `/admin/teacher-verifications/${id}/approve`)
+}
+
+export function rejectTeacherVerification(id, reason) {
+  return request('PUT', `/admin/teacher-verifications/${id}/reject`, { reason })
 }
