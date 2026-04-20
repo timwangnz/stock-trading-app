@@ -4,19 +4,21 @@
  * Highlights the active page and dispatches NAVIGATE actions.
  */
 
-import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity, Info } from 'lucide-react'
+import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity, Info, Trophy, Lightbulb, GraduationCap } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
 import clsx from 'clsx'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',  page: 'dashboard',  icon: LayoutDashboard },
-  { label: 'Portfolio',  page: 'portfolio',  icon: Briefcase },
-  { label: 'Watchlist',  page: 'watchlist',  icon: Star },
-  { label: 'History',    page: 'history',    icon: BarChart2 },
-  { label: 'Activity',   page: 'activity',   icon: Activity },
-  { label: 'About',      page: 'about',      icon: Info },
+  { label: 'Dashboard',   page: 'dashboard',   icon: LayoutDashboard },
+  { label: 'Portfolio',   page: 'portfolio',   icon: Briefcase },
+  { label: 'Watchlist',   page: 'watchlist',   icon: Star },
+  { label: 'History',     page: 'history',     icon: BarChart2 },
+  { label: 'Leaderboard', page: 'leaderboard', icon: Trophy },
+  { label: 'Ideas',       page: 'ideas',       icon: Lightbulb },
+  { label: 'Activity',    page: 'activity',    icon: Activity },
+  { label: 'About',       page: 'about',       icon: Info },
 ]
 
 export default function Sidebar() {
@@ -70,6 +72,24 @@ export default function Sidebar() {
       {/* Portfolio sparkline widget */}
       <PortfolioSparkline />
 
+      {/* Classroom link — teachers and admins */}
+      {(role === 'teacher' || role === 'admin') && (
+        <div className="px-3 pb-1">
+          <button
+            onClick={() => navigate('classroom')}
+            className={clsx(
+              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+              state.currentPage === 'classroom'
+                ? 'bg-accent-blue/15 text-accent-blue font-medium'
+                : 'text-muted hover:bg-surface-hover hover:text-primary'
+            )}
+          >
+            <GraduationCap size={17} />
+            My Classes
+          </button>
+        </div>
+      )}
+
       {/* Admin link — only visible to admins */}
       {isAdmin && (
         <div className="px-3 pb-2">
@@ -95,6 +115,7 @@ export default function Sidebar() {
             <span className={clsx(
               'text-xs px-2 py-0.5 rounded-full border font-medium inline-block',
               role === 'admin'    && 'text-orange-400  border-orange-400/20  bg-orange-400/5',
+              role === 'teacher'  && 'text-purple-400  border-purple-400/20  bg-purple-400/5',
               role === 'premium'  && 'text-yellow-400 border-yellow-400/20 bg-yellow-400/5',
               role === 'user'     && 'text-accent-blue border-accent-blue/20 bg-accent-blue/5',
               role === 'readonly' && 'text-muted   border-border',
@@ -109,6 +130,7 @@ export default function Sidebar() {
               role === 'readonly' && 'text-muted',
             )}>
               {role === 'admin'    && 'Full access + admin panel'}
+              {role === 'teacher'  && 'Create classes & invite students'}
               {role === 'premium'  && 'Full portfolio & watchlist access'}
               {role === 'user'     && 'Can edit portfolio & watchlist'}
               {role === 'readonly' && 'View only — no edits'}

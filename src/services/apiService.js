@@ -115,3 +115,69 @@ export function addWatchlistSymbol(symbol) {
 export function removeWatchlistSymbol(symbol) {
   return request('DELETE', `/watchlist/${symbol}`)
 }
+
+// ── Classes ─────────────────────────────────────────────────────
+
+export function createClass(data) {
+  return request('POST', '/classes', data)
+}
+
+export function fetchMyClasses() {
+  return request('GET', '/classes/mine')
+}
+
+export function fetchManagedClasses() {
+  return request('GET', '/classes')
+}
+
+export function fetchClassDetail(id) {
+  return request('GET', `/classes/${id}`)
+}
+
+export function updateClass(id, data) {
+  return request('PUT', `/classes/${id}`, data)
+}
+
+export function sendInvites(classId, emails) {
+  return request('POST', `/classes/${classId}/invite`, { emails })
+}
+
+export function joinClass(token) {
+  return request('POST', '/classes/join', { token })
+}
+
+// ── Leaderboard ─────────────────────────────────────────────────
+
+export function fetchClassLeaderboard(classId) {
+  return request('GET', `/leaderboard/class/${classId}`)
+}
+
+export function fetchStateLeaderboard(state) {
+  return request('GET', `/leaderboard/state/${encodeURIComponent(state)}`)
+}
+
+export function fetchNationalLeaderboard() {
+  return request('GET', '/leaderboard/national')
+}
+
+// ── Trading Ideas ────────────────────────────────────────────────
+
+export function postIdea(data) {
+  return request('POST', '/ideas', data)
+}
+
+export function fetchIdeas(classId) {
+  return request('GET', `/ideas?class_id=${classId}`)
+}
+
+export function fetchPublicIdeas(state) {
+  return request('GET', `/ideas/public${state ? `?state=${encodeURIComponent(state)}` : ''}`)
+}
+
+export function toggleIdeaLike(ideaId) {
+  return request('POST', `/ideas/${ideaId}/react`)
+}
+
+export function deleteIdea(ideaId) {
+  return request('DELETE', `/ideas/${ideaId}`)
+}

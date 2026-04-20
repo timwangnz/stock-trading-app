@@ -17,26 +17,33 @@ import StockDetail   from './pages/StockDetail'
 import AdminPanel    from './pages/AdminPanel'
 import History       from './pages/History'
 import Activity      from './pages/Activity'
-import Login         from './pages/Login'
 import About         from './pages/About'
+import Login         from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
+import Classroom     from './pages/Classroom'
+import Leaderboard   from './pages/Leaderboard'
+import Ideas         from './pages/Ideas'
 
 const PAGES = {
-  dashboard: Dashboard,
-  portfolio: Portfolio,
-  watchlist: Watchlist,
-  stock:     StockDetail,
-  admin:     AdminPanel,
-  history:   History,
-  activity:  Activity,
-  about:     About,
+  dashboard:   Dashboard,
+  portfolio:   Portfolio,
+  watchlist:   Watchlist,
+  stock:       StockDetail,
+  admin:       AdminPanel,
+  history:     History,
+  activity:    Activity,
+  about:       About,
+  classroom:   Classroom,
+  leaderboard: Leaderboard,
+  ideas:       Ideas,
 }
 
 // Read URL params once at module load (before any re-renders strip them)
 const urlParams   = new URLSearchParams(window.location.search)
 const RESET_TOKEN = urlParams.get('reset_token')
 const SHOW_ABOUT  = urlParams.get('about') !== null
-if (RESET_TOKEN || SHOW_ABOUT) window.history.replaceState({}, '', '/')
+const JOIN_TOKEN  = urlParams.get('join')
+if (RESET_TOKEN || SHOW_ABOUT || JOIN_TOKEN) window.history.replaceState({}, '', '/')
 
 export default function App() {
   const { user, loading, isAdmin } = useAuth()
@@ -44,6 +51,8 @@ export default function App() {
   const [agentOpen, setAgentOpen]   = useState(false)
   const [resetToken, setResetToken] = useState(RESET_TOKEN)
   const [showAbout, setShowAbout]   = useState(SHOW_ABOUT)
+  const [joinToken, setJoinToken]   = useState(JOIN_TOKEN)
+  const [joinMsg,   setJoinMsg]     = useState(null)
 
   // If the user is already logged in and /?about was in the URL, navigate to About
   useEffect(() => {
@@ -52,6 +61,17 @@ export default function App() {
       setShowAbout(false)
     }
   }, [user, showAbout, dispatch])
+
+  // Auto-join class when user is logged in and a join token is in the URL
+  useEffect(() => {
+    if (!user || !joinToken) return
+    import('./services/apiService').then(({ joinClass }) => {
+      joinClass(joinToken)
+        .then(res => setJoinMsg(`🎉 You joined ${res.class_name}! Check the Leaderboard and Ideas tabs.`))
+        .catch(err => setJoinMsg(`Could not join class: ${err.message}`))
+        .finally(() => setJoinToken(null))
+    })
+  }, [user, joinToken])
 
   // While restoring the session from localStorage, show nothing
   if (loading) {
@@ -102,6 +122,12 @@ export default function App() {
           agentOpen={agentOpen}
           onToggleAgent={() => setAgentOpen(v => !v)}
         />
+        {joinMsg && (
+          <div className="mx-4 mt-3 px-4 py-3 rounded-xl bg-gain/10 border border-gain/30 text-gain text-sm flex items-center justify-between">
+            <span>{joinMsg}</span>
+            <button onClick={() => setJoinMsg(null)} className="ml-4 text-gain/60 hover:text-gain text-lg leading-none">×</button>
+          </div>
+        )}
         <main className="flex-1 overflow-y-auto">
           <PageComponent />
         </main>

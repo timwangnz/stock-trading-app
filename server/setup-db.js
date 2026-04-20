@@ -30,7 +30,7 @@ async function setup() {
   await client.connect()
 
   // ── users ─────────────────────────────────────────────────────
-  // role:        admin | premium | user | readonly  (default: user)
+  // role:        admin | teacher | premium | user | readonly
   // is_disabled: admin can block a user from signing in
   await client.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -40,7 +40,7 @@ async function setup() {
       avatar_url    VARCHAR(500),
       password_hash VARCHAR(255) NULL,
       role          VARCHAR(20)  NOT NULL DEFAULT 'user'
-                    CHECK (role IN ('admin','premium','user','readonly')),
+                    CHECK (role IN ('admin','teacher','premium','user','readonly')),
       is_disabled   BOOLEAN      NOT NULL DEFAULT FALSE,
       created_at    TIMESTAMPTZ  DEFAULT NOW()
     )
@@ -160,6 +160,99 @@ async function setup() {
       ON password_reset_tokens (token)
   `)
   console.log('✅ Table "password_reset_tokens" ready')
+
+  // ── classes ───────────────────────────────────────────────────
+  // A classroom created by a teacher. Students join via email invite.
+  // ideas_public: when true, trading ideas are visible outside the class.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS classes (
+      id             SERIAL        PRIMARY KEY,
+      name           VARCHAR(100)  NOT NULL,
+      teacher_id     VARCHAR(50)   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      school_name    VARCHAR(200)  NOT NULL,
+      state          VARCHAR(100)  NOT NULL,
+      country        VARCHAR(100)  NOT NULL DEFAULT 'US',
+      start_balance  NUMERIC(15,2) NOT NULL DEFAULT 100000,
+      start_date     DATE          NOT NULL DEFAULT CURRENT_DATE,
+      end_date       DATE          NULL,
+      ideas_public   BOOLEAN       NOT NULL DEFAULT FALSE,
+      created_at     TIMESTAMPTZ   DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes (teacher_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_classes_state   ON classes (state)`)
+  console.log('✅ Table "classes" ready')
+
+  // ── class_members ─────────────────────────────────────────────
+  // Tracks which users belong to which class.
+  // base_value: portfolio value at the moment of joining — used to calculate % return rank.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS class_members (
+      class_id   INTEGER      NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+      user_id    VARCHAR(50)  NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+      base_value NUMERIC(15,2) NOT NULL DEFAULT 0,
+      joined_at  TIMESTAMPTZ  DEFAULT NOW(),
+      PRIMARY KEY (class_id, user_id)
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_class_members_user ON class_members (user_id)`)
+  console.log('✅ Table "class_members" ready')
+
+  // ── class_invites ─────────────────────────────────────────────
+  // Teacher invites students by email. Token is emailed; clicking it joins the class.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS class_invites (
+      id          BIGSERIAL    PRIMARY KEY,
+      class_id    INTEGER      NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+      email       VARCHAR(255) NOT NULL,
+      token       TEXT         NOT NULL UNIQUE,
+      expires_at  TIMESTAMPTZ  NOT NULL,
+      accepted_at TIMESTAMPTZ  NULL,
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_class_invites_token ON class_invites (token)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_class_invites_email ON class_invites (email)`)
+  console.log('✅ Table "class_invites" ready')
+
+  // ── trading_ideas ─────────────────────────────────────────────
+  // Structured trade calls posted by students.
+  // outcome: pending → hit | missed | expired (resolved when timeframe elapses)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS trading_ideas (
+      id            BIGSERIAL     PRIMARY KEY,
+      class_id      INTEGER       NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+      user_id       VARCHAR(50)   NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+      symbol        VARCHAR(10)   NOT NULL,
+      direction     VARCHAR(4)    NOT NULL CHECK (direction IN ('BUY','SELL')),
+      entry_price   NUMERIC(15,4) NOT NULL,
+      target_price  NUMERIC(15,4) NOT NULL,
+      timeframe_days INTEGER      NOT NULL,
+      rationale     TEXT          NULL,
+      outcome       VARCHAR(10)   NOT NULL DEFAULT 'pending'
+                    CHECK (outcome IN ('pending','hit','missed','expired')),
+      resolved_price NUMERIC(15,4) NULL,
+      expires_at    TIMESTAMPTZ   NOT NULL,
+      resolved_at   TIMESTAMPTZ   NULL,
+      created_at    TIMESTAMPTZ   DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_ideas_class   ON trading_ideas (class_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_ideas_user    ON trading_ideas (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_ideas_expires ON trading_ideas (expires_at) WHERE outcome = 'pending'`)
+  console.log('✅ Table "trading_ideas" ready')
+
+  // ── idea_reactions ────────────────────────────────────────────
+  // Simple like system — one like per user per idea.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS idea_reactions (
+      idea_id    BIGINT       NOT NULL REFERENCES trading_ideas(id) ON DELETE CASCADE,
+      user_id    VARCHAR(50)  NOT NULL REFERENCES users(id)         ON DELETE CASCADE,
+      created_at TIMESTAMPTZ  DEFAULT NOW(),
+      PRIMARY KEY (idea_id, user_id)
+    )
+  `)
+  console.log('✅ Table "idea_reactions" ready')
 
   await client.end()
   console.log('\n🎉 Database setup complete!')

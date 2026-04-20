@@ -43,7 +43,9 @@ import { requireRole, requirePermission, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail } from './email.js'
-import marketRouter from './market.js'
+import marketRouter                    from './market.js'
+import { classRouter, leaderboardRouter } from './classes.js'
+import { ideasRouter }                    from './ideas.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app  = express()
@@ -489,7 +491,12 @@ app.post('/api/auth/logout', authMiddleware, (req, res) => {
 })
 
 // ── Market data (Polygon proxy — JWT required to prevent quota abuse) ────────
-app.use('/api/market', authMiddleware, marketRouter)
+app.use('/api/market',       authMiddleware, marketRouter)
+
+// ── Classroom, leaderboard, trading ideas ────────────────────────────────────
+app.use('/api/classes',      authMiddleware, classRouter)
+app.use('/api/leaderboard',  authMiddleware, leaderboardRouter)
+app.use('/api/ideas',        authMiddleware, ideasRouter)
 
 // ── Internal / machine-to-machine routes (no JWT — own auth) ────
 // Must be registered BEFORE app.use('/api', authMiddleware) so the

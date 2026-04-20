@@ -14,7 +14,7 @@
 
 // ── Role hierarchy ─────────────────────────────────────────────
 // Higher index = more permissions. Used to check "at least this role".
-export const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'admin']
+export const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'teacher', 'admin']
 
 // ── Permissions ────────────────────────────────────────────────
 // Named permissions map to the minimum role required.
