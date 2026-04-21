@@ -269,40 +269,49 @@ function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
  */
 function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, prefillShares }) {
   const livePrice = holding.price > 0 ? holding.price.toFixed(2) : ''
-  const [qty,   setQty]   = useState(prefillShares != null ? String(prefillShares) : '')
-  const [price, setPrice] = useState(livePrice)
-  const [error, setError] = useState('')
+  const [qty,        setQty]        = useState(prefillShares != null ? String(prefillShares) : '')
+  const [price,      setPrice]      = useState(livePrice)
+  const [error,      setError]      = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const isBuy  = mode === 'buy'
-  const shares = parseFloat(qty)
+  const isBuy       = mode === 'buy'
+  const shares      = parseFloat(qty)
+  const totalShares = parseFloat(holding.shares)   // pg returns NUMERIC as string — always parse
   // For buys: teacher/admin use their typed price, students get locked live price
   // For sells: teacher/admin use their typed price, students use live price
   const effectivePrice = canManualPrice ? parseFloat(price) : holding.price
 
   // Live preview calculations
   const totalCash  = !isNaN(shares) && !isNaN(effectivePrice) ? shares * effectivePrice : null
-  const sellPct    = !isNaN(shares) && holding.shares > 0
-    ? Math.min(100, (shares / holding.shares) * 100).toFixed(1) : null
+  const sellPct    = !isNaN(shares) && totalShares > 0
+    ? Math.min(100, (shares / totalShares) * 100).toFixed(1) : null
   const newAvgCost = isBuy && !isNaN(shares) && !isNaN(effectivePrice) && shares > 0
-    ? ((holding.avgCost * holding.shares) + (effectivePrice * shares)) / (holding.shares + shares)
+    ? ((holding.avgCost * totalShares) + (effectivePrice * shares)) / (totalShares + shares)
     : null
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     if (isNaN(shares) || shares <= 0) { setError('Enter a valid number of shares.'); return }
-    if (isBuy) {
-      if (isNaN(effectivePrice) || effectivePrice <= 0) { setError('Enter a valid price.'); return }
-      onBuy({ symbol: holding.symbol, shares, avgCost: effectivePrice })
-    } else {
-      if (shares > holding.shares) {
-        setError(`You only hold ${holding.shares} shares — can't sell more than that.`)
-        return
+    setSubmitting(true)
+    try {
+      if (isBuy) {
+        if (isNaN(effectivePrice) || effectivePrice <= 0) { setError('Enter a valid price.'); setSubmitting(false); return }
+        await onBuy({ symbol: holding.symbol, shares, avgCost: effectivePrice })
+      } else {
+        if (shares > totalShares) {
+          setError(`You only hold ${totalShares} shares — can't sell more than that.`)
+          setSubmitting(false)
+          return
+        }
+        // Pass price for teacher/admin so the server can credit the correct amount
+        await onSell({ symbol: holding.symbol, shares, price: canManualPrice ? effectivePrice : undefined })
       }
-      // Pass price for teacher/admin so the server can credit the correct amount
-      onSell({ symbol: holding.symbol, shares, price: canManualPrice ? effectivePrice : undefined })
+      // Parent's onBuy/onSell handler is responsible for closing the panel (setActivePanel(null))
+    } catch (err) {
+      setError(err.message || 'Trade failed. Please try again.')
+      setSubmitting(false)
     }
-    onClose()
   }
 
   return (
@@ -325,7 +334,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
               <label className="text-muted text-xs">Shares</label>
               <input
                 type="number" min="0.001" step="any"
-                placeholder={isBuy ? 'How many to buy' : `Max ${holding.shares}`}
+                placeholder={isBuy ? 'How many to buy' : `Max ${totalShares}`}
                 value={qty} onChange={e => setQty(e.target.value)}
                 autoFocus
                 className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-40 focus:border-accent-blue/50 transition-colors"
@@ -374,18 +383,19 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
 
             {/* Buttons */}
             <div className="flex items-center gap-2 mt-auto ml-auto shrink-0">
-              {error && <p className="text-loss text-xs">{error}</p>}
+              {error && <p className="text-loss text-xs max-w-xs">{error}</p>}
               <button
                 type="submit"
+                disabled={submitting}
                 className={clsx(
-                  'text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors',
+                  'text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
                   isBuy ? 'bg-gain hover:bg-gain/80' : 'bg-loss hover:bg-loss/80'
                 )}
               >
-                {isBuy ? 'Confirm Buy' : 'Confirm Sell'}
+                {submitting ? (isBuy ? 'Buying…' : 'Selling…') : (isBuy ? 'Confirm Buy' : 'Confirm Sell')}
               </button>
-              <button type="button" onClick={onClose}
-                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors">
+              <button type="button" onClick={onClose} disabled={submitting}
+                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors disabled:opacity-50">
                 Cancel
               </button>
             </div>
@@ -957,32 +967,33 @@ export default function Portfolio() {
                         prefillShares={activePanel?.prefillShares}
                         onClose={() => setActivePanel(null)}
                         onBuy={async (payload) => {
-                          setTradeError(null)
-                          try {
-                            if (canManualPrice) {
-                              // Teacher/admin manual buy: update portfolio at specified price,
-                              // no cash deducted (admin override)
-                              dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })
-                            } else {
-                              await buyAtMarket(payload.symbol, payload.shares)
-                              await reloadPortfolio()
-                            }
-                            setActivePanel(null)
-                          } catch (err) { setTradeError(err.message) }
+                          // Errors propagate to TradePanel which shows them inline
+                          if (canManualPrice) {
+                            // Teacher/admin manual buy: update portfolio at specified price,
+                            // no cash deducted (admin override)
+                            dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })
+                          } else {
+                            await buyAtMarket(payload.symbol, payload.shares)
+                            await reloadPortfolio()
+                          }
+                          setActivePanel(null)
                         }}
                         onSell={async (payload) => {
-                          setTradeError(null)
-                          try {
-                            if (canManualPrice && payload.price != null) {
-                              // Teacher/admin sell at specified price — server credits cash
-                              await sellManual(payload.symbol, payload.shares, payload.price)
-                              await reloadPortfolio()
-                            } else {
-                              await sellAtMarket(payload.symbol, payload.shares)
-                              await reloadPortfolio()
-                            }
-                            setActivePanel(null)
-                          } catch (err) { setTradeError(err.message) }
+                          // Errors propagate to TradePanel which shows them inline
+                          if (canManualPrice && payload.price != null && !isNaN(payload.price)) {
+                            // Teacher/admin sell at specified price — server credits cash
+                            await sellManual(payload.symbol, payload.shares, payload.price)
+                          } else {
+                            await sellAtMarket(payload.symbol, payload.shares)
+                          }
+                          await reloadPortfolio()
+                          // Collapse lot rows so updated state is clean
+                          setExpandedSymbols(prev => {
+                            const next = new Set(prev)
+                            next.delete(payload.symbol)
+                            return next
+                          })
+                          setActivePanel(null)
                         }}
                       />
                     )}
