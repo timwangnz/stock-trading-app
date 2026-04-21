@@ -5,6 +5,14 @@
  * All Polygon API calls are made here on the server — the API key
  * never leaves the backend and is never visible in the browser.
  *
+ * Responses are cached in-memory (server/cache.js) to reduce Polygon
+ * quota usage and improve response times:
+ *   snapshots    →  60 s  (live prices, refresh once per minute)
+ *   aggregates   →  60 min (historical bars rarely change)
+ *   ticker       →  24 h  (company details are very stable)
+ *   search       →   5 min (ticker list is stable)
+ *   prev-close   →  60 min (set once per trading day)
+ *
  * Mounted at /api/market in server/index.js.
  *
  * Routes:
@@ -16,6 +24,7 @@
  */
 
 import { Router } from 'express'
+import { cacheGet, cacheSet, TTL } from './cache.js'
 
 const router  = Router()
 const BASE    = 'https://api.polygon.io'
@@ -44,20 +53,27 @@ async function polyFetch(path) {
 
 // ── Snapshots ────────────────────────────────────────────────────
 // GET /api/market/snapshots?symbols=AAPL,MSFT
+//
+// Cache key uses sorted symbols so AAPL,MSFT and MSFT,AAPL share the
+// same cache entry and don't cause duplicate Polygon calls.
 router.get('/snapshots', async (req, res) => {
   const { symbols } = req.query
   if (!symbols) return res.status(400).json({ error: 'symbols query param required' })
 
-  // Validate each symbol
-  const syms = symbols.split(',').map(s => s.trim().toUpperCase())
+  const syms = symbols.split(',').map(s => s.trim().toUpperCase()).sort()
   if (syms.some(s => !validSymbol(s))) {
     return res.status(400).json({ error: 'Invalid symbol format' })
   }
+
+  const cacheKey = `snapshots:${syms.join(',')}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
 
   try {
     const data = await polyFetch(
       `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms.join(',')}`
     )
+    cacheSet(cacheKey, data, TTL.SNAPSHOT)
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: err.message })
@@ -70,14 +86,19 @@ router.get('/aggregates/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase()
   const { from, to } = req.query
 
-  if (!validSymbol(symbol))     return res.status(400).json({ error: 'Invalid symbol' })
+  if (!validSymbol(symbol))               return res.status(400).json({ error: 'Invalid symbol' })
   if (!validDate(from) || !validDate(to)) return res.status(400).json({ error: 'from and to must be YYYY-MM-DD' })
+
+  const cacheKey = `aggs:${symbol}:${from}:${to}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
 
   try {
     const data = await polyFetch(
       `/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}` +
       `?adjusted=true&sort=asc&limit=500`
     )
+    cacheSet(cacheKey, data, TTL.AGGREGATES)
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: err.message })
@@ -90,8 +111,13 @@ router.get('/ticker/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase()
   if (!validSymbol(symbol)) return res.status(400).json({ error: 'Invalid symbol' })
 
+  const cacheKey = `ticker:${symbol}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
+
   try {
     const data = await polyFetch(`/v3/reference/tickers/${symbol}`)
+    cacheSet(cacheKey, data, TTL.TICKER)
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: err.message })
@@ -109,22 +135,23 @@ router.get('/search', async (req, res) => {
   if (!q) return res.json([])
 
   const limit   = Math.min(parseInt(req.query.limit ?? '10'), 20)
-  const polyLim = Math.min(limit * 3, 50)  // fetch extra candidates for sorting
+  const polyLim = Math.min(limit * 3, 50)
+  const upper   = q.trim().toUpperCase()
+
+  const cacheKey = `search:${upper}:${limit}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
 
   // Rank a ticker against the user's query (lower = better match)
-  function tickerRank(ticker, upper) {
-    if (ticker === upper)              return 0  // exact: QQQ → QQQ
-    if (ticker.startsWith(upper))      return 1  // prefix: QQQ → QQQM
-    if (ticker.includes(upper))        return 2  // contains: QQQ → CQQQ
-    return 3                                      // name match only
+  function tickerRank(ticker, u) {
+    if (ticker === u)           return 0  // exact: QQQ → QQQ
+    if (ticker.startsWith(u))   return 1  // prefix: QQQ → QQQM
+    if (ticker.includes(u))     return 2  // contains: QQQ → CQQQ
+    return 3                               // name match only
   }
 
   try {
-    const upper = q.trim().toUpperCase()
-
     // Run text search + exact ticker lookup in parallel.
-    // The exact lookup guarantees "QQQ" always appears when you type "QQQ",
-    // even if Polygon's text-search ranking buries it behind similar tickers.
     const [searchData, exactData] = await Promise.allSettled([
       polyFetch(`/v3/reference/tickers?search=${encodeURIComponent(q)}&market=stocks&active=true&limit=${polyLim}`),
       polyFetch(`/v3/reference/tickers?ticker=${encodeURIComponent(upper)}&market=stocks&active=true&limit=1`),
@@ -133,7 +160,6 @@ router.get('/search', async (req, res) => {
     const searchResults = searchData.status === 'fulfilled' ? (searchData.value.results ?? []) : []
     const exactResults  = exactData.status  === 'fulfilled' ? (exactData.value.results  ?? []) : []
 
-    // Merge: exact match first, then search results (deduplicated by ticker)
     const seen   = new Set()
     const merged = [...exactResults, ...searchResults].filter(t => {
       if (seen.has(t.ticker)) return false
@@ -141,11 +167,13 @@ router.get('/search', async (req, res) => {
       return true
     })
 
-    const sorted = merged
+    const result = { results: merged
       .sort((a, b) => tickerRank(a.ticker, upper) - tickerRank(b.ticker, upper))
       .slice(0, limit)
+    }
 
-    res.json({ results: sorted })
+    cacheSet(cacheKey, result, TTL.SEARCH)
+    res.json(result)
   } catch (err) {
     res.status(502).json({ error: err.message })
   }
@@ -157,10 +185,13 @@ router.get('/prev-close/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase()
   if (!validSymbol(symbol)) return res.status(400).json({ error: 'Invalid symbol' })
 
+  const cacheKey = `prevclose:${symbol}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
+
   try {
-    const data = await polyFetch(
-      `/v2/aggs/ticker/${symbol}/prev?adjusted=true`
-    )
+    const data = await polyFetch(`/v2/aggs/ticker/${symbol}/prev?adjusted=true`)
+    cacheSet(cacheKey, data, TTL.PREV_CLOSE)
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: err.message })
