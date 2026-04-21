@@ -56,6 +56,11 @@ const PORT = process.env.PORT || process.env.API_PORT || 3001
 const DEFAULT_DASHBOARD_SYMBOLS = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA']
 
 async function addDefaultSymbols(userId) {
+  // Initialise cash balance for new user
+  await pool.query(
+    'INSERT INTO user_balances (user_id, cash) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [userId, DEFAULT_CASH]
+  )
   for (const sym of DEFAULT_DASHBOARD_SYMBOLS) {
     await pool.query(
       'INSERT INTO dashboard_symbols (user_id, symbol) VALUES ($1, $2) ON CONFLICT DO NOTHING',
@@ -539,9 +544,162 @@ app.get('/api/portfolio', async (req, res) => {
   }
 })
 
-// ── Portfolio (write — blocked for readonly) ────────────────────
+// ── Portfolio market trades (buy/sell at live price) ────────────
+const SYMBOL_RE       = /^[A-Z0-9.]{1,10}$/
+const DEFAULT_CASH    = 100_000   // starting cash for new users
+
+/** Get user's cash balance, initialising to DEFAULT_CASH if first time. */
+async function getCash(userId) {
+  const { rows } = await pool.query(
+    `INSERT INTO user_balances (user_id, cash)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id) DO NOTHING
+     RETURNING cash`,
+    [userId, DEFAULT_CASH]
+  )
+  if (rows.length) return parseFloat(rows[0].cash)
+  const { rows: [existing] } = await pool.query(
+    'SELECT cash FROM user_balances WHERE user_id = $1', [userId]
+  )
+  return parseFloat(existing.cash)
+}
+
+/** Record a completed trade to the transactions table (fire-and-forget safe). */
+async function recordTransaction(userId, symbol, side, shares, price, source = 'market') {
+  try {
+    await pool.query(
+      `INSERT INTO transactions (user_id, symbol, side, shares, price, total, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [userId, symbol.toUpperCase(), side, shares, price,
+       (parseFloat(shares) * parseFloat(price)).toFixed(2), source]
+    )
+  } catch (err) {
+    // Never let transaction recording break the trade itself
+    console.warn('[transactions] Record failed:', err.message)
+  }
+}
+
+/** Adjust cash balance by `delta` (positive = credit, negative = debit). */
+async function adjustCash(userId, delta) {
+  const { rows: [row] } = await pool.query(
+    `UPDATE user_balances SET cash = cash + $1, updated_at = NOW()
+     WHERE user_id = $2 RETURNING cash`,
+    [delta, userId]
+  )
+  return parseFloat(row.cash)
+}
+
+async function fetchLivePrice(symbol) {
+  const key = process.env.POLYGON_API_KEY
+  if (!key) throw new Error('POLYGON_API_KEY not set')
+  const res = await fetch(
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbol}&apiKey=${key}`
+  )
+  if (!res.ok) throw new Error(`Price fetch failed: ${res.status}`)
+  const data = await res.json()
+  const ticker = data.tickers?.[0]
+  if (!ticker) throw new Error(`No price data for ${symbol}`)
+  // Use day close, fall back to prev day close, then last trade price
+  return ticker.day?.c || ticker.prevDay?.c || ticker.lastTrade?.p || null
+}
+
+// POST /api/portfolio/buy — buy at current market price (students)
+app.post('/api/portfolio/buy', requirePermission(PERMISSIONS.TRADE), async (req, res) => {
+  const sym    = (req.body.symbol || '').toUpperCase().trim()
+  const shares = parseFloat(req.body.shares)
+  if (!SYMBOL_RE.test(sym))         return res.status(400).json({ error: 'Invalid symbol' })
+  if (isNaN(shares) || shares <= 0) return res.status(400).json({ error: 'Invalid shares' })
+
+  try {
+    const price = await fetchLivePrice(sym)
+    if (!price) return res.status(502).json({ error: `Could not fetch live price for ${sym}` })
+
+    const cost = shares * price
+    const cash = await getCash(req.user.id)
+    if (cash < cost) {
+      return res.status(400).json({
+        error: `Insufficient funds — need $${cost.toFixed(2)}, have $${cash.toFixed(2)}`,
+      })
+    }
+
+    const { rows: [existing] } = await pool.query(
+      'SELECT shares, avg_cost FROM portfolio WHERE user_id = $1 AND symbol = $2',
+      [req.user.id, sym]
+    )
+    let newShares, newAvgCost
+    if (existing) {
+      newShares  = parseFloat(existing.shares) + shares
+      newAvgCost = ((parseFloat(existing.shares) * parseFloat(existing.avg_cost)) + (shares * price)) / newShares
+    } else {
+      newShares  = shares
+      newAvgCost = price
+    }
+    await pool.query(
+      `INSERT INTO portfolio (user_id, symbol, shares, avg_cost)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, symbol) DO UPDATE
+         SET shares = EXCLUDED.shares, avg_cost = EXCLUDED.avg_cost, updated_at = NOW()`,
+      [req.user.id, sym, newShares, newAvgCost]
+    )
+    const newCash = await adjustCash(req.user.id, -cost)
+    audit(req.user.id, 'buy', { symbol: sym, shares, avgCost: newAvgCost, price, cost }, req)
+    recordTransaction(req.user.id, sym, 'buy', shares, price, 'market')
+    res.json({ symbol: sym, shares: newShares, avgCost: newAvgCost, price, cash: newCash })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/portfolio/sell — sell at current market price (students)
+app.post('/api/portfolio/sell', requirePermission(PERMISSIONS.TRADE), async (req, res) => {
+  const sym    = (req.body.symbol || '').toUpperCase().trim()
+  const shares = parseFloat(req.body.shares)
+  if (!SYMBOL_RE.test(sym))         return res.status(400).json({ error: 'Invalid symbol' })
+  if (isNaN(shares) || shares <= 0) return res.status(400).json({ error: 'Invalid shares' })
+
+  try {
+    const price = await fetchLivePrice(sym)
+
+    const { rows: [existing] } = await pool.query(
+      'SELECT shares, avg_cost FROM portfolio WHERE user_id = $1 AND symbol = $2',
+      [req.user.id, sym]
+    )
+    if (!existing) return res.status(400).json({ error: `You don't hold any ${sym}` })
+    if (shares > parseFloat(existing.shares)) {
+      return res.status(400).json({ error: `You only hold ${existing.shares} shares of ${sym}` })
+    }
+    const remaining = parseFloat((parseFloat(existing.shares) - shares).toFixed(6))
+    if (remaining <= 0.000001) {
+      await pool.query('DELETE FROM portfolio WHERE user_id = $1 AND symbol = $2', [req.user.id, sym])
+    } else {
+      await pool.query(
+        'UPDATE portfolio SET shares = $1, updated_at = NOW() WHERE user_id = $2 AND symbol = $3',
+        [remaining, req.user.id, sym]
+      )
+    }
+    const proceeds = shares * (price ?? 0)
+    const newCash  = await adjustCash(req.user.id, proceeds)
+    audit(req.user.id, 'sell', { symbol: sym, shares, price: price ?? null, proceeds }, req)
+    if (price) recordTransaction(req.user.id, sym, 'sell', shares, price, 'market')
+    res.json({ symbol: sym, remaining, price, cash: newCash })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/portfolio/cash — current cash balance
+app.get('/api/portfolio/cash', async (req, res) => {
+  try {
+    const cash = await getCash(req.user.id)
+    res.json({ cash })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Portfolio (manual write — teacher/admin only) ────────────────
 app.put('/api/portfolio/:symbol',
-  requirePermission(PERMISSIONS.TRADE),
+  requireRole('teacher'),
   async (req, res) => {
     const { symbol }          = req.params
     const { shares, avgCost } = req.body
@@ -825,11 +983,28 @@ app.get('/api/admin/users/:id/watchlist', adminOnly, async (req, res) => {
  * and upserts one row into portfolio_snapshots for today's date.
  */
 async function takeSnapshot(userId) {
-  const { rows: holdings } = await pool.query(
-    'SELECT symbol, shares FROM portfolio WHERE user_id = $1',
-    [userId]
-  )
-  if (!holdings.length) return null
+  const [{ rows: holdings }, { rows: [cashRow] }] = await Promise.all([
+    pool.query('SELECT symbol, shares FROM portfolio WHERE user_id = $1', [userId]),
+    pool.query('SELECT cash FROM user_balances WHERE user_id = $1', [userId]),
+  ])
+
+  const cashBalance = parseFloat(cashRow?.cash ?? 0)
+
+  // Need at least some holdings to fetch prices — but if user only has cash
+  // (no stocks yet), still snapshot the cash balance.
+  if (!holdings.length) {
+    if (cashBalance <= 0) return null
+    const today = new Date().toISOString().split('T')[0]
+    await pool.query(
+      `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, date) DO UPDATE
+         SET total_value = EXCLUDED.total_value,
+             breakdown   = EXCLUDED.breakdown`,
+      [userId, today, cashBalance.toFixed(2), { CASH: { value: cashBalance } }]
+    )
+    return { date: today, total_value: cashBalance, breakdown: { CASH: { value: cashBalance } } }
+  }
 
   const symbols = holdings.map(h => h.symbol).join(',')
   const apiKey  = process.env.POLYGON_API_KEY
@@ -852,14 +1027,18 @@ async function takeSnapshot(userId) {
     return null
   }
 
-  let totalValue = 0
+  let holdingsValue = 0
   const breakdown = {}
   for (const h of holdings) {
     const price = priceMap[h.symbol] ?? 0
     const value = parseFloat(h.shares) * price
-    totalValue += value
+    holdingsValue += value
     breakdown[h.symbol] = { shares: parseFloat(h.shares), price, value }
   }
+
+  // Include cash so total_value = cash + stocks (matches the Portfolio page display)
+  if (cashBalance > 0) breakdown.CASH = { value: cashBalance }
+  const totalValue = holdingsValue + cashBalance
 
   const today = new Date().toISOString().split('T')[0]
   await pool.query(
@@ -1054,6 +1233,29 @@ app.delete('/api/dashboard/symbols/:symbol', authMiddleware, async (req, res) =>
     )
     audit(req.user.id, 'dashboard_unpin', { symbol: sym }, req)
     res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Transactions ─────────────────────────────────────────────────
+// GET /api/transactions — user's own trade history
+app.get('/api/transactions', async (req, res) => {
+  const limit  = Math.min(parseInt(req.query.limit  ?? 100), 500)
+  const offset = parseInt(req.query.offset ?? 0)
+  const symbol = req.query.symbol?.toUpperCase() ?? null
+  try {
+    const params = [req.user.id]
+    const extra  = symbol ? ` AND symbol = $${params.push(symbol)}` : ''
+    const { rows } = await pool.query(
+      `SELECT id, symbol, side, shares, price, total, source, executed_at
+       FROM transactions
+       WHERE user_id = $1${extra}
+       ORDER BY executed_at DESC
+       LIMIT $${params.push(limit)} OFFSET $${params.push(offset)}`,
+      params
+    )
+    res.json(rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

@@ -2,198 +2,255 @@
  * Portfolio.jsx — now uses live prices via useLivePrices hook.
  */
 
-import { useMemo, useState, useRef, useEffect } from 'react'
-import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, Search, X, Loader2, TrendingDown, ShoppingCart, MinusCircle } from 'lucide-react'
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown } from 'lucide-react'
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, ReferenceLine, CartesianGrid,
+} from 'recharts'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
-import { searchTickers } from '../services/polygonApi'
+import { buyAtMarket, sellAtMarket, fetchPortfolio, fetchCash, getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
 import StockTreemap from '../components/StockTreemap'
+import StockSearch from '../components/StockSearch'
+import { useTheme } from '../context/ThemeContext'
 import clsx from 'clsx'
 
-/**
- * StockSearchInput
- * Live autocomplete backed by Polygon's /v3/reference/tickers API.
- * Debounces keystrokes (300ms) so we don't hammer the API on every key.
- *
- * Key concepts:
- *  - useEffect + setTimeout for debouncing
- *  - Cleanup function (return () => clearTimeout) to cancel stale requests
- *  - AbortController to cancel in-flight fetch when query changes
- */
-function StockSearchInput({ value, onChange }) {
-  const [query,     setQuery]     = useState(value || '')
-  const [results,   setResults]   = useState([])
-  const [open,      setOpen]      = useState(false)
-  const [searching, setSearching] = useState(false)  // shows spinner while API is called
-  const [confirmed, setConfirmed] = useState(!!value)
-  const inputRef = useRef(null)
+// StockSearchInput is now the shared StockSearch component (see components/StockSearch.jsx)
 
-  // ── Debounced search ───────────────────────────────────────
-  // Every time `query` changes (and the symbol isn't already confirmed),
-  // we wait 300ms then call Polygon. If the user types again within that
-  // window, the previous timeout is cancelled and we start fresh.
+// ── Portfolio performance chart ───────────────────────────────────
+
+const CHART_RANGES = [
+  { label: '1W',  days: 7   },
+  { label: '1M',  days: 30  },
+  { label: '3M',  days: 90  },
+  { label: '6M',  days: 180 },
+  { label: '1Y',  days: 365 },
+  { label: 'All', days: 3650 },
+]
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-surface-card border border-border rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="text-muted mb-0.5">{label}</p>
+      <p className="text-primary font-semibold">
+        ${parseFloat(payload[0].value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </p>
+    </div>
+  )
+}
+
+function PortfolioChart({ currentValue }) {
+  const { chart: chartTheme } = useTheme()
+  const [range,   setRange]   = useState('1M')
+  const [data,    setData]    = useState([])
+  const [loading, setLoading] = useState(true)
+
   useEffect(() => {
-    if (confirmed || query.trim().length < 1) {
-      setResults([])
-      setSearching(false)
-      return
+    const days = CHART_RANGES.find(r => r.label === range)?.days ?? 30
+    const from = new Date()
+    from.setDate(from.getDate() - days)
+    const fromStr = from.toISOString().split('T')[0]
+    const toStr   = new Date().toISOString().split('T')[0]
+
+    setLoading(true)
+    getPortfolioSnapshots(fromStr, toStr)
+      .then(rows => setData(rows.map(r => ({ date: r.date, value: parseFloat(r.total_value) }))))
+      .catch(() => setData([]))
+      .finally(() => setLoading(false))
+  }, [range])
+
+  // Append today's live value if it's newer/different than the last snapshot
+  const chartData = useMemo(() => {
+    if (!currentValue || !data.length) return data
+    const today = new Date().toISOString().split('T')[0]
+    const last  = data[data.length - 1]
+    if (last?.date === today) {
+      // Replace today's snapshot with the live value (more accurate)
+      return [...data.slice(0, -1), { date: today, value: currentValue }]
     }
+    return [...data, { date: today, value: currentValue }]
+  }, [data, currentValue])
 
-    setSearching(true)
-
-    const timer = setTimeout(async () => {
-      try {
-        const hits = await searchTickers(query, 8)
-        setResults(hits)
-        setOpen(true)
-      } catch {
-        setResults([])
-      } finally {
-        setSearching(false)
-      }
-    }, 300) // 300ms debounce delay
-
-    // Cleanup: if the component re-renders before 300ms, cancel the timer
-    return () => clearTimeout(timer)
-  }, [query, confirmed])
-
-  const handleSelect = (stock) => {
-    setQuery(stock.symbol)
-    setConfirmed(true)
-    setOpen(false)
-    setResults([])
-    onChange(stock.symbol)
-  }
-
-  const handleClear = () => {
-    setQuery('')
-    setConfirmed(false)
-    setOpen(false)
-    setResults([])
-    onChange('')
-    setTimeout(() => inputRef.current?.focus(), 0)
-  }
-
-  const handleChange = (e) => {
-    setQuery(e.target.value)
-    setConfirmed(false)
-    onChange('')
-  }
-
-  const showDropdown = open && !confirmed && (searching || results.length > 0 || query.length >= 1)
+  const startValue = chartData[0]?.value ?? 0
+  const endValue   = chartData[chartData.length - 1]?.value ?? 0
+  const returnAmt  = endValue - startValue
+  const returnPct  = startValue > 0 ? (returnAmt / startValue) * 100 : 0
+  const lineColor  = returnAmt >= 0 ? '#22c55e' : '#ef4444'
+  const isUp       = returnAmt >= 0
 
   return (
-    <div className="relative">
-      {/* Input box */}
-      <div className={clsx(
-        'flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2 border transition-colors',
-        showDropdown ? 'border-accent-blue/50' : 'border-border'
-      )}>
-        {searching
-          ? <Loader2 size={13} className="text-accent-blue shrink-0 animate-spin" />
-          : <Search  size={13} className="text-muted shrink-0" />
-        }
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Search any stock…"
-          value={query}
-          onChange={handleChange}
-          onFocus={() => results.length > 0 && setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          className="bg-transparent text-primary text-sm placeholder-muted outline-none w-full"
-          autoComplete="off"
-        />
-        {confirmed && (
-          <span className="text-gain text-xs font-bold shrink-0">{query} ✓</span>
-        )}
-        {query && (
-          <button type="button" onClick={handleClear} tabIndex={-1}>
-            <X size={12} className="text-muted hover:text-primary shrink-0" />
-          </button>
-        )}
+    <div className="bg-surface-card border border-border rounded-xl p-5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <p className="text-muted text-xs mb-1">Portfolio Performance</p>
+          {chartData.length > 1 && (
+            <p className={clsx('text-sm font-medium', isUp ? 'text-gain' : 'text-loss')}>
+              {isUp ? '+' : ''}{returnPct.toFixed(2)}%
+              <span className="text-muted font-normal ml-1.5">
+                ({isUp ? '+' : ''}${returnAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) · {range}
+              </span>
+            </p>
+          )}
+        </div>
+        <div className="flex gap-1">
+          {CHART_RANGES.map(r => (
+            <button
+              key={r.label}
+              onClick={() => setRange(r.label)}
+              className={clsx(
+                'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                range === r.label
+                  ? 'bg-accent-blue/20 text-accent-blue'
+                  : 'text-muted hover:text-primary hover:bg-surface-hover'
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Dropdown */}
-      {showDropdown && (
-        <ul className="absolute top-full mt-1 w-72 bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
-          {searching && results.length === 0 && (
-            <li className="flex items-center gap-2 px-4 py-3 text-muted text-xs">
-              <Loader2 size={12} className="animate-spin" /> Searching Polygon…
-            </li>
-          )}
-          {!searching && results.length === 0 && query.length >= 1 && (
-            <li className="px-4 py-3 text-muted text-xs">No results for "{query}"</li>
-          )}
-          {results.map(stock => (
-            <li key={stock.symbol}>
-              <button
-                type="button"
-                onMouseDown={() => handleSelect(stock)}
-                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-hover transition-colors text-left"
-              >
-                <span className="text-accent-blue font-mono text-sm font-bold w-14 shrink-0">
-                  {stock.symbol}
-                </span>
-                <span className="text-muted text-xs truncate">{stock.name}</span>
-                <span className="ml-auto text-faint text-xs shrink-0 uppercase">{stock.type}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+      {loading ? (
+        <div className="h-[200px] flex items-center justify-center">
+          <div className="w-5 h-5 border-2 border-border border-t-accent-blue rounded-full animate-spin" />
+        </div>
+      ) : chartData.length < 2 ? (
+        <div className="h-[200px] flex flex-col items-center justify-center gap-2 text-muted text-sm">
+          <p>Not enough history yet.</p>
+          <p className="text-xs text-faint">Performance data builds up as you log in each day.</p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fill: chartTheme.axis, fontSize: 10 }}
+              tickLine={false}
+              axisLine={false}
+              interval={Math.max(0, Math.floor(chartData.length / 5) - 1)}
+              tickFormatter={d => {
+                const date = new Date(d)
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              }}
+            />
+            <YAxis
+              tick={{ fill: chartTheme.axis, fontSize: 10 }}
+              tickLine={false}
+              axisLine={false}
+              width={72}
+              tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
+              domain={['auto', 'auto']}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            <ReferenceLine y={startValue} stroke={chartTheme.reference} strokeDasharray="4 4" strokeOpacity={0.6} />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={lineColor}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: lineColor, strokeWidth: 0 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       )}
     </div>
   )
 }
 
-function AddHoldingForm({ onAdd, onCancel }) {
-  const [symbol,  setSymbol]  = useState('')
-  const [shares,  setShares]  = useState('')
-  const [avgCost, setAvgCost] = useState('')
+function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
+  const [symbol,    setSymbol]    = useState('')
+  const [shares,    setShares]    = useState('')
+  const [avgCost,   setAvgCost]   = useState('')
+  const [livePrice, setLivePrice] = useState(null)
+  const [fetching,  setFetching]  = useState(false)
+
+  // When symbol is confirmed and user can't set manual price, fetch live price
+  useEffect(() => {
+    if (!symbol || canManualPrice) { setLivePrice(null); return }
+    setFetching(true)
+    fetch(`/api/market/snapshots?symbols=${symbol}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('tradebuddy_token')}` }
+    })
+      .then(r => r.json())
+      .then(data => {
+        const ticker = data.tickers?.[0]
+        const price  = ticker?.day?.c || ticker?.prevDay?.c || ticker?.lastTrade?.p
+        setLivePrice(price ?? null)
+      })
+      .catch(() => setLivePrice(null))
+      .finally(() => setFetching(false))
+  }, [symbol, canManualPrice])
 
   const handleSubmit = (e) => {
     e.preventDefault()
     const s  = symbol.toUpperCase().trim()
     const sh = parseFloat(shares)
-    const ac = parseFloat(avgCost)
-    if (!s || isNaN(sh) || isNaN(ac) || sh <= 0 || ac <= 0) return
-    onAdd({ symbol: s, shares: sh, avgCost: ac })
+    if (!s || isNaN(sh) || sh <= 0) return
+
+    if (canManualPrice) {
+      const ac = parseFloat(avgCost)
+      if (isNaN(ac) || ac <= 0) return
+      onAdd({ symbol: s, shares: sh, avgCost: ac })
+    } else {
+      // Market price buy — pass shares only, server fetches price
+      onAdd({ symbol: s, shares: sh, marketBuy: true })
+    }
   }
+
+  const submitDisabled = !symbol || !shares ||
+    (canManualPrice ? !avgCost : (!livePrice && !fetching))
 
   return (
     <form onSubmit={handleSubmit} className="bg-surface-card border border-border rounded-xl p-4 space-y-3">
-      <h3 className="text-primary text-sm font-semibold">Add Holding</h3>
-      <div className="grid grid-cols-3 gap-2">
-        {/* Searchable stock picker replaces the old <select> */}
-        <StockSearchInput value={symbol} onChange={setSymbol} />
+      <h3 className="text-primary text-sm font-semibold">
+        {canManualPrice ? 'Add Holding' : 'Buy at Market Price'}
+      </h3>
+      <div className={clsx('grid gap-2', canManualPrice ? 'grid-cols-3' : 'grid-cols-2')}>
+        <StockSearch value={symbol} onChange={setSymbol} placeholder="Search any stock…" />
         <input
           type="number" min="0.001" step="any" placeholder="Shares"
           value={shares} onChange={e => setShares(e.target.value)}
           className="bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
           required
         />
-        <input
-          type="number" min="0.01" step="any" placeholder="Avg cost ($)"
-          value={avgCost} onChange={e => setAvgCost(e.target.value)}
-          className="bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
-          required
-        />
+        {canManualPrice ? (
+          <input
+            type="number" min="0.01" step="any" placeholder="Avg cost ($)"
+            value={avgCost} onChange={e => setAvgCost(e.target.value)}
+            className="bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border"
+            required
+          />
+        ) : (
+          symbol && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-surface-hover border border-border rounded-lg text-sm">
+              <Lock size={12} className="text-muted shrink-0" />
+              {fetching
+                ? <span className="text-muted text-xs">Fetching price…</span>
+                : livePrice
+                  ? <span className="text-primary">${livePrice.toFixed(2)} <span className="text-muted text-xs">market price</span></span>
+                  : <span className="text-muted text-xs">Price unavailable</span>
+              }
+            </div>
+          )
+        )}
       </div>
       <div className="flex items-center gap-2">
         <button
           type="submit"
-          disabled={!symbol}
+          disabled={submitDisabled}
           className="bg-accent-blue hover:bg-accent-blue/80 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
         >
-          Add to Portfolio
+          {canManualPrice ? 'Add to Portfolio' : 'Buy Now'}
         </button>
         <button type="button" onClick={onCancel} className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors">Cancel</button>
-        {!symbol && (
-          <span className="text-muted text-xs ml-1">← Select a stock first</span>
-        )}
+        {!symbol && <span className="text-muted text-xs ml-1">← Select a stock first</span>}
       </div>
     </form>
   )
@@ -210,14 +267,15 @@ function AddHoldingForm({ onAdd, onCancel }) {
  * @param {object} holding  - the enriched holding object (has .shares, .price, .symbol)
  * @param {function} onClose
  */
-function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
-  const [qty,       setQty]       = useState('')
-  const [price,     setPrice]     = useState(mode === 'buy' ? holding.price.toFixed(2) : '')
-  const [error,     setError]     = useState('')
+function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, prefillShares }) {
+  const [qty,   setQty]   = useState(prefillShares != null ? String(prefillShares) : '')
+  const [price, setPrice] = useState(mode === 'buy' ? holding.price.toFixed(2) : '')
+  const [error, setError] = useState('')
 
   const isBuy  = mode === 'buy'
   const shares = parseFloat(qty)
-  const cost   = parseFloat(price)
+  // For regular users, always use the live price shown on screen
+  const cost   = canManualPrice ? parseFloat(price) : holding.price
 
   // Live preview calculations
   const totalCash = !isNaN(shares) && !isNaN(cost) ? shares * cost : null
@@ -278,15 +336,22 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
               />
             </div>
 
-            {/* Price input (buy only) */}
+            {/* Price input (buy only) — editable for admin/teacher, locked for students */}
             {isBuy && (
               <div className="flex flex-col gap-1">
                 <label className="text-muted text-xs">Price per share ($)</label>
-                <input
-                  type="number" min="0.01" step="any"
-                  value={price} onChange={e => setPrice(e.target.value)}
-                  className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
-                />
+                {canManualPrice ? (
+                  <input
+                    type="number" min="0.01" step="any"
+                    value={price} onChange={e => setPrice(e.target.value)}
+                    className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
+                  />
+                ) : (
+                  <div className="flex items-center gap-1.5 px-3 py-2 bg-surface-card border border-border rounded-lg w-36 text-sm text-primary">
+                    <Lock size={11} className="text-muted shrink-0" />
+                    ${holding.price.toFixed(2)}
+                  </div>
+                )}
               </div>
             )}
 
@@ -341,10 +406,62 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell }) {
 
 export default function Portfolio() {
   const { state, dispatch } = useApp()
-  const { canTrade, isReadonly } = useAuth()
+  const { canTrade, isReadonly, isAdmin, isTeacher } = useAuth()
+  const canManualPrice = isAdmin || isTeacher   // only admin/teacher can set arbitrary prices
   const [showAddForm, setShowAddForm] = useState(false)
-  // activePanel: { symbol, mode: 'buy'|'sell' } or null
-  const [activePanel, setActivePanel] = useState(null)
+  const [tradeError,  setTradeError]  = useState(null)
+  const [cash,        setCash]        = useState(null)
+  // activePanel: { symbol, mode: 'buy'|'sell', prefillShares?: number } or null
+  const [activePanel,      setActivePanel]      = useState(null)
+  // expandedSymbols: Set of symbols whose lot rows are visible
+  const [expandedSymbols,  setExpandedSymbols]  = useState(new Set())
+  // transactions: all buy txns fetched once, grouped by symbol
+  const [lotsBySymbol,     setLotsBySymbol]     = useState({})
+
+  // Load cash balance on mount + trigger today's snapshot so the chart is current
+  useEffect(() => {
+    fetchCash().then(({ cash: c }) => setCash(c)).catch(() => {})
+    triggerSnapshot().catch(() => {})  // fire-and-forget; chart re-fetches independently
+    // Fetch all buy transactions for lot display
+    fetchTransactions({ limit: 500 })
+      .then(rows => {
+        const bySymbol = {}
+        for (const t of rows) {
+          if (t.side !== 'buy') continue
+          if (!bySymbol[t.symbol]) bySymbol[t.symbol] = []
+          bySymbol[t.symbol].push(t)
+        }
+        setLotsBySymbol(bySymbol)
+      })
+      .catch(() => {})
+  }, [])
+
+  const toggleExpand = useCallback((symbol) => {
+    setExpandedSymbols(prev => {
+      const next = new Set(prev)
+      next.has(symbol) ? next.delete(symbol) : next.add(symbol)
+      return next
+    })
+  }, [])
+
+  // Reload portfolio + cash + lots from server after a market trade.
+  // Uses RELOAD_PORTFOLIO (not LOAD_DATA) so watchlist is never touched.
+  const reloadPortfolio = async () => {
+    const [fresh, { cash: newCash }, txns] = await Promise.all([
+      fetchPortfolio(),
+      fetchCash(),
+      fetchTransactions({ limit: 500 }),
+    ])
+    dispatch({ type: ACTIONS.RELOAD_PORTFOLIO, payload: fresh })
+    setCash(newCash)
+    const bySymbol = {}
+    for (const t of txns) {
+      if (t.side !== 'buy') continue
+      if (!bySymbol[t.symbol]) bySymbol[t.symbol] = []
+      bySymbol[t.symbol].push(t)
+    }
+    setLotsBySymbol(bySymbol)
+  }
 
   // Fetch live prices for all held symbols
   const symbols = state.portfolio.map(h => h.symbol)
@@ -366,10 +483,11 @@ export default function Portfolio() {
     })
   }, [state.portfolio, prices])
 
-  const totalValue   = holdings.reduce((s, h) => s + h.value, 0)
-  const totalCost    = holdings.reduce((s, h) => s + h.cost,  0)
-  const totalGain    = totalValue - totalCost
-  const totalGainPct = totalCost > 0 ? (totalGain / totalCost) * 100 : 0
+  const holdingsValue = holdings.reduce((s, h) => s + h.value, 0)
+  const totalValue    = holdingsValue + (cash ?? 0)
+  const totalCost     = holdings.reduce((s, h) => s + h.cost,  0)
+  const totalGain     = holdingsValue - totalCost
+  const totalGainPct  = totalCost > 0 ? (totalGain / totalCost) * 100 : 0
 
   if (loading) return <LoadingSpinner message="Fetching live prices…" />
   if (error)   return <ErrorMessage error={error} />
@@ -378,7 +496,7 @@ export default function Portfolio() {
     <div className="p-6 space-y-6">
 
       {/* ── Summary cards ────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
@@ -392,6 +510,18 @@ export default function Portfolio() {
           <p className="text-primary font-bold text-2xl">
             ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
+          <p className="text-muted text-xs mt-0.5">cash + holdings</p>
+        </div>
+
+        <div className="bg-surface-card border border-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign size={14} className="text-accent-blue" />
+            <p className="text-muted text-xs">Cash Available</p>
+          </div>
+          <p className="text-accent-blue font-bold text-2xl">
+            ${(cash ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <p className="text-muted text-xs mt-0.5">buying power</p>
         </div>
 
         <div className="bg-surface-card border border-border rounded-xl p-4">
@@ -414,6 +544,9 @@ export default function Portfolio() {
           </p>
         </div>
       </div>
+
+      {/* ── Performance chart ───────────────────────── */}
+      <PortfolioChart currentValue={totalValue} />
 
       {/* ── Allocation heatmap ───────────────────────── */}
       {holdings.length > 0 && totalValue > 0 && (
@@ -457,9 +590,24 @@ export default function Portfolio() {
         {showAddForm && (
           <div className="p-4 border-b border-border">
             <AddHoldingForm
-              onAdd={h => { dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload: h }); setShowAddForm(false) }}
+              canManualPrice={canManualPrice}
+              onAdd={async h => {
+                setTradeError(null)
+                try {
+                  if (h.marketBuy) {
+                    await buyAtMarket(h.symbol, h.shares)
+                    await reloadPortfolio()
+                  } else {
+                    dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload: h })
+                  }
+                  setShowAddForm(false)
+                } catch (err) {
+                  setTradeError(err.message)
+                }
+              }}
               onCancel={() => setShowAddForm(false)}
             />
+            {tradeError && <p className="text-loss text-xs mt-2">{tradeError}</p>}
           </div>
         )}
 
@@ -469,7 +617,8 @@ export default function Portfolio() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-muted text-xs">
-                <th className="text-left px-5 py-3 font-medium">Symbol</th>
+                <th className="w-6 px-2 py-3"></th>
+                <th className="text-left px-3 py-3 font-medium">Symbol</th>
                 <th className="text-right px-5 py-3 font-medium">Shares</th>
                 <th className="text-right px-5 py-3 font-medium">Avg Cost</th>
                 <th className="text-right px-5 py-3 font-medium">Current (Live)</th>
@@ -480,12 +629,16 @@ export default function Portfolio() {
             </thead>
             <tbody>
               {holdings.map(h => {
-                const panelOpen = activePanel?.symbol === h.symbol
-                const panelMode = activePanel?.mode
+                const panelOpen  = activePanel?.symbol === h.symbol
+                const panelMode  = activePanel?.mode
+                const isExpanded = expandedSymbols.has(h.symbol)
+                const lots       = lotsBySymbol[h.symbol] ?? []
+                const hasLots    = lots.length > 0
 
-                const togglePanel = (mode) => {
-                  // If the same button is clicked again, close the panel
-                  setActivePanel(panelOpen && panelMode === mode ? null : { symbol: h.symbol, mode })
+                const togglePanel = (mode, prefillShares) => {
+                  const already = panelOpen && panelMode === mode &&
+                    activePanel?.prefillShares === prefillShares
+                  setActivePanel(already ? null : { symbol: h.symbol, mode, prefillShares })
                 }
 
                 return (
@@ -494,11 +647,28 @@ export default function Portfolio() {
                       key={h.symbol}
                       className={clsx(
                         'border-t border-border transition-colors',
-                        panelOpen ? 'bg-surface-hover' : 'hover:bg-surface-hover'
+                        panelOpen || isExpanded ? 'bg-surface-hover' : 'hover:bg-surface-hover'
                       )}
                     >
+                      {/* Expand chevron */}
+                      <td className="w-6 pl-3 pr-0 py-3">
+                        {hasLots ? (
+                          <button
+                            onClick={() => toggleExpand(h.symbol)}
+                            title={isExpanded ? 'Collapse buy lots' : 'Show buy lots'}
+                            className="text-muted hover:text-primary transition-colors"
+                          >
+                            {isExpanded
+                              ? <ChevronDown size={14} />
+                              : <ChevronRight size={14} />}
+                          </button>
+                        ) : (
+                          <span className="w-3.5 inline-block" />
+                        )}
+                      </td>
+
                       {/* Symbol */}
-                      <td className="px-5 py-3">
+                      <td className="px-3 py-3">
                         <button onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: h.symbol })} className="text-left">
                           <p className="text-primary font-mono font-semibold">{h.symbol}</p>
                           <p className="text-muted text-xs">{h.name}</p>
@@ -561,20 +731,133 @@ export default function Portfolio() {
                       </td>
                     </tr>
 
+                    {/* ── Buy lot sub-rows (expanded) ────────────────────── */}
+                    {isExpanded && lots.map((lot, idx) => {
+                      const lotShares   = parseFloat(lot.shares)
+                      const lotPrice    = parseFloat(lot.price)
+                      const lotValue    = lotShares * h.price          // at live price
+                      const lotCost     = parseFloat(lot.total)
+                      const lotGain     = lotValue - lotCost
+                      const lotGainPct  = lotCost > 0 ? (lotGain / lotCost) * 100 : 0
+                      const dt          = new Date(lot.executed_at)
+                      const dateLabel   = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+                      const isLotPanel  = panelOpen && panelMode === 'sell' &&
+                        activePanel?.prefillShares === lotShares && activePanel?.lotIdx === idx
+
+                      return (
+                        <tr
+                          key={`lot-${lot.id}`}
+                          className="border-t border-border/50 bg-surface-hover/60"
+                        >
+                          {/* indent spacer */}
+                          <td className="pl-3 pr-0 py-2" />
+                          {/* lot info */}
+                          <td className="px-3 py-2" colSpan={1}>
+                            <p className="text-muted text-[11px]">Lot #{idx + 1}</p>
+                            <p className="text-faint text-[10px]">{dateLabel}{lot.source === 'agent' ? ' · AI' : ''}</p>
+                          </td>
+                          <td className="text-right px-5 py-2 text-secondary text-xs font-mono">
+                            {lotShares.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                          </td>
+                          <td className="text-right px-5 py-2 text-secondary text-xs font-mono">
+                            ${lotPrice.toFixed(2)}
+                          </td>
+                          {/* current price — same as parent row */}
+                          <td className="text-right px-5 py-2 text-muted text-xs">—</td>
+                          <td className="text-right px-5 py-2 text-xs text-secondary font-mono">
+                            ${lotValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="text-right px-5 py-2">
+                            <p className={clsx('text-xs font-medium', lotGain >= 0 ? 'text-gain' : 'text-loss')}>
+                              {lotGain >= 0 ? '+' : ''}${lotGain.toFixed(2)}
+                            </p>
+                            <p className={clsx('text-[10px]', lotGainPct >= 0 ? 'text-gain' : 'text-loss')}>
+                              {lotGainPct >= 0 ? '+' : ''}{lotGainPct.toFixed(2)}%
+                            </p>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {canTrade && (
+                              <button
+                                onClick={() => {
+                                  setActivePanel({
+                                    symbol: h.symbol,
+                                    mode: 'sell',
+                                    prefillShares: lotShares,
+                                    lotIdx: idx,
+                                  })
+                                }}
+                                className={clsx(
+                                  'px-2 py-1 rounded text-xs font-medium border transition-colors',
+                                  isLotPanel
+                                    ? 'bg-loss/20 border-loss/40 text-loss'
+                                    : 'border-border text-muted hover:border-loss/40 hover:text-loss'
+                                )}
+                              >
+                                Sell lot
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+
                     {/* Inline trade panel — renders as a full-width row beneath */}
                     {panelOpen && (
                       <TradePanel
-                        key={`panel-${h.symbol}`}
+                        key={`panel-${h.symbol}-${activePanel?.lotIdx ?? 'main'}`}
                         mode={panelMode}
                         holding={h}
+                        canManualPrice={canManualPrice}
+                        prefillShares={activePanel?.prefillShares}
                         onClose={() => setActivePanel(null)}
-                        onBuy={(payload) => dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })}
-                        onSell={(payload) => dispatch({ type: ACTIONS.SELL_SHARES, payload })}
+                        onBuy={async (payload) => {
+                          setTradeError(null)
+                          try {
+                            if (canManualPrice) {
+                              dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })
+                            } else {
+                              await buyAtMarket(payload.symbol, payload.shares)
+                              await reloadPortfolio()
+                            }
+                            setActivePanel(null)
+                          } catch (err) { setTradeError(err.message) }
+                        }}
+                        onSell={async (payload) => {
+                          setTradeError(null)
+                          try {
+                            if (canManualPrice) {
+                              dispatch({ type: ACTIONS.SELL_SHARES, payload })
+                            } else {
+                              await sellAtMarket(payload.symbol, payload.shares)
+                              await reloadPortfolio()
+                            }
+                            setActivePanel(null)
+                          } catch (err) { setTradeError(err.message) }
+                        }}
                       />
                     )}
                   </>
                 )
               })}
+
+              {/* ── Cash row ── always shown at bottom of table */}
+              {cash !== null && (
+                <tr className="border-t border-border bg-accent-blue/5">
+                  <td className="px-2 py-3" />
+                  <td className="px-3 py-3">
+                    <p className="text-accent-blue font-mono font-semibold">CASH</p>
+                    <p className="text-muted text-xs">Buying power</p>
+                  </td>
+                  <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                  <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                  <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                  <td className="text-right px-5 py-3 text-accent-blue font-medium">
+                    ${cash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                  <td className="px-4 py-3"></td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}

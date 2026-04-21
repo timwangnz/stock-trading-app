@@ -2,65 +2,35 @@
  * Watchlist.jsx — now uses live prices via useLivePrices hook.
  */
 
-import { useState, useEffect, useRef } from 'react'
-import { Star, StarOff, PlusCircle, RefreshCw, Search, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { Star, StarOff, PlusCircle, RefreshCw } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
-import { searchTickers } from '../services/polygonApi'
+import StockSearch from '../components/StockSearch'
 import clsx from 'clsx'
-
-const DEBOUNCE_MS = 300
 
 export default function Watchlist() {
   const { state, dispatch } = useApp()
   const { canTrade } = useAuth()
-  const [showPicker,  setShowPicker]  = useState(false)
-  const [query,       setQuery]       = useState('')
-  const [results,     setResults]     = useState([])
-  const [searching,   setSearching]   = useState(false)
-  const [isFocused,   setIsFocused]   = useState(false)
-  const debounceRef = useRef(null)
-  const inputRef    = useRef(null)
+  const [showPicker, setShowPicker] = useState(false)
+  const [searchKey,  setSearchKey]  = useState(0)
 
   // Fetch live prices for watchlisted symbols
   const { prices, loading, error, refetch } = useLivePrices(state.watchlist)
 
-  // Live search via Polygon whenever query changes
-  useEffect(() => {
-    clearTimeout(debounceRef.current)
-    if (query.trim().length === 0) { setResults([]); setSearching(false); return }
-    setSearching(true)
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const hits = await searchTickers(query, 8)
-        // Filter out symbols already on the watchlist
-        setResults(hits.filter(h => !state.watchlist.includes(h.symbol)))
-      } catch {
-        setResults([])
-      } finally {
-        setSearching(false)
-      }
-    }, DEBOUNCE_MS)
-    return () => clearTimeout(debounceRef.current)
-  }, [query, state.watchlist])
-
-  const showDropdown = isFocused && (searching || results.length > 0)
-
   const handleAdd = (symbol) => {
+    if (!symbol) return
     dispatch({ type: ACTIONS.ADD_TO_WATCHLIST, payload: symbol })
-    setQuery('')
-    setResults([])
-    setIsFocused(false)
-    inputRef.current?.blur()
+    // Reset the search box
+    setSearchKey(k => k + 1)
   }
 
   const handleClosePicker = () => {
     setShowPicker(false)
-    setQuery('')
-    setResults([])
+    setSearchKey(k => k + 1)
   }
 
   // Enrich watchlist with live prices + static metadata
@@ -92,7 +62,7 @@ export default function Watchlist() {
 
         {canTrade && (
           <button
-            onClick={() => { setShowPicker(v => !v); setTimeout(() => inputRef.current?.focus(), 50) }}
+            onClick={() => setShowPicker(v => !v)}
             className="flex items-center gap-1.5 text-accent-blue hover:text-accent-blue/80 text-xs font-medium transition-colors"
           >
             <PlusCircle size={14} /> Add Stock
@@ -103,59 +73,21 @@ export default function Watchlist() {
       {/* ── Add stock search ─────────────────────────── */}
       {showPicker && (
         <div className="bg-surface-card border border-border rounded-xl p-4">
-          <div className="relative">
-            {/* Search input */}
-            <div className="flex items-center gap-2 bg-surface-hover border border-border rounded-lg px-3 py-2">
-              {searching
-                ? <Loader2 size={14} className="text-muted shrink-0 animate-spin" />
-                : <Search  size={14} className="text-muted shrink-0" />
-              }
-              <input
-                ref={inputRef}
-                type="text"
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <StockSearch
+                key={searchKey}
+                value=""
+                onChange={handleAdd}
+                exclude={state.watchlist}
                 placeholder="Search any stock or ETF to add…"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
-                className="bg-transparent text-sm text-primary placeholder-muted outline-none w-full"
+                autoFocus
               />
-              <button
-                onClick={handleClosePicker}
-                className="text-muted hover:text-primary text-sm ml-1 transition-colors"
-              >✕</button>
             </div>
-
-            {/* Results dropdown */}
-            {showDropdown && (
-              <ul
-                onMouseDown={e => e.preventDefault()}
-                className="absolute top-full mt-1 w-full bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden"
-              >
-                {searching && results.length === 0 ? (
-                  <li className="px-4 py-3 text-muted text-sm">Searching…</li>
-                ) : results.length === 0 ? (
-                  <li className="px-4 py-3 text-muted text-sm">No results found.</li>
-                ) : (
-                  results.map(stock => (
-                    <li key={stock.symbol}>
-                      <button
-                        onClick={() => handleAdd(stock.symbol)}
-                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover transition-colors text-left"
-                      >
-                        <span className="text-accent-blue font-mono text-sm font-semibold w-16 shrink-0">
-                          {stock.symbol}
-                        </span>
-                        <span className="text-muted text-sm truncate">{stock.name}</span>
-                        {stock.type && stock.type !== 'CS' && (
-                          <span className="ml-auto text-faint text-xs shrink-0">{stock.type}</span>
-                        )}
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
+            <button
+              onClick={handleClosePicker}
+              className="text-muted hover:text-primary text-sm transition-colors shrink-0"
+            >✕</button>
           </div>
         </div>
       )}

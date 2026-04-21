@@ -44,8 +44,9 @@ function formatDetails(action, details) {
     const d = typeof details === 'string' ? JSON.parse(details) : details
     if (action === 'login'  || action === 'signup') return `via ${d.method}`
     if (action === 'buy'    || action === 'add_holding')
-      return `${d.symbol} · ${d.shares} shares @ $${Number(d.avgCost ?? 0).toFixed(2)}`
-    if (action === 'sell')             return `${d.symbol} · ${d.shares} shares`
+      return `${d.symbol} · ${d.shares} shares @ $${Number(d.avgCost ?? d.price ?? 0).toFixed(2)}`
+    if (action === 'sell')
+      return `${d.symbol} · ${d.shares} shares${d.price ? ` @ $${Number(d.price).toFixed(2)}` : ''}`
     if (action === 'remove_holding')   return d.symbol
     if (action === 'add_watchlist' || action === 'remove_watchlist') return d.symbol
     if (action.startsWith('agent_'))   return d.command ?? `${d.symbol ?? ''}`

@@ -29,9 +29,9 @@ export async function getSnapshots(symbols) {
   const data = await apiFetch(`/snapshots?symbols=${symbols.join(',')}`)
   return (data.tickers ?? []).map(t => ({
     symbol:    t.ticker,
-    // Use || not ?? — Polygon returns day.c = 0 on non-trading days, and
-    // ?? treats 0 as a valid value so it never falls through to prevDay.
-    price:     t.day?.c    || t.prevDay?.c || 0,
+    // Fallback chain: today's close → last trade → prev day close → 0
+    // lastTrade.p is the most reliable during after-hours / weekends when day.c = 0
+    price:     t.day?.c    || t.lastTrade?.p || t.prevDay?.c || 0,
     change:    t.day?.c    ? parseFloat((t.todaysChange     ?? 0).toFixed(2)) : 0,
     changePct: t.day?.c    ? parseFloat((t.todaysChangePerc ?? 0).toFixed(2)) : 0,
     volume:    t.day?.v    || 0,

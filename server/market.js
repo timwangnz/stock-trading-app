@@ -99,18 +99,53 @@ router.get('/ticker/:symbol', async (req, res) => {
 })
 
 // ── Ticker search ─────────────────────────────────────────────────
-// GET /api/market/search?q=apple&limit=8
+// GET /api/market/search?q=apple&limit=10
+//
+// We fetch 3× the requested limit from Polygon so we have enough candidates
+// to sort by ticker relevance: exact match → prefix → contains → name match.
+// This ensures "QQQ" appears before "CQQQ"/"DVQQ"/etc. when you type "QQQ".
 router.get('/search', async (req, res) => {
   const { q } = req.query
   if (!q) return res.json([])
 
-  const limit = Math.min(parseInt(req.query.limit ?? '8'), 20)
+  const limit   = Math.min(parseInt(req.query.limit ?? '10'), 20)
+  const polyLim = Math.min(limit * 3, 50)  // fetch extra candidates for sorting
+
+  // Rank a ticker against the user's query (lower = better match)
+  function tickerRank(ticker, upper) {
+    if (ticker === upper)              return 0  // exact: QQQ → QQQ
+    if (ticker.startsWith(upper))      return 1  // prefix: QQQ → QQQM
+    if (ticker.includes(upper))        return 2  // contains: QQQ → CQQQ
+    return 3                                      // name match only
+  }
 
   try {
-    const data = await polyFetch(
-      `/v3/reference/tickers?search=${encodeURIComponent(q)}&market=stocks&active=true&limit=${limit}`
-    )
-    res.json(data)
+    const upper = q.trim().toUpperCase()
+
+    // Run text search + exact ticker lookup in parallel.
+    // The exact lookup guarantees "QQQ" always appears when you type "QQQ",
+    // even if Polygon's text-search ranking buries it behind similar tickers.
+    const [searchData, exactData] = await Promise.allSettled([
+      polyFetch(`/v3/reference/tickers?search=${encodeURIComponent(q)}&market=stocks&active=true&limit=${polyLim}`),
+      polyFetch(`/v3/reference/tickers?ticker=${encodeURIComponent(upper)}&market=stocks&active=true&limit=1`),
+    ])
+
+    const searchResults = searchData.status === 'fulfilled' ? (searchData.value.results ?? []) : []
+    const exactResults  = exactData.status  === 'fulfilled' ? (exactData.value.results  ?? []) : []
+
+    // Merge: exact match first, then search results (deduplicated by ticker)
+    const seen   = new Set()
+    const merged = [...exactResults, ...searchResults].filter(t => {
+      if (seen.has(t.ticker)) return false
+      seen.add(t.ticker)
+      return true
+    })
+
+    const sorted = merged
+      .sort((a, b) => tickerRank(a.ticker, upper) - tickerRank(b.ticker, upper))
+      .slice(0, limit)
+
+    res.json({ results: sorted })
   } catch (err) {
     res.status(502).json({ error: err.message })
   }

@@ -129,6 +129,40 @@ async function setup() {
   `)
   console.log('✅ Table "dashboard_symbols" ready')
 
+  // ── user_balances ─────────────────────────────────────────────
+  // Tracks each user's simulated cash. Starts at DEFAULT_CASH.
+  // Debited on buy, credited on sell. Enforced server-side on every trade.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS user_balances (
+      user_id    VARCHAR(50)    PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      cash       NUMERIC(15,2)  NOT NULL DEFAULT 100000,
+      updated_at TIMESTAMPTZ    DEFAULT NOW()
+    )
+  `)
+  console.log('✅ Table "user_balances" ready')
+
+  // ── transactions ──────────────────────────────────────────────
+  // One row per completed buy or sell trade.
+  // side: 'buy' | 'sell'
+  // source: 'market' (student clicked Buy/Sell) | 'agent' (AI trade)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id          BIGSERIAL       PRIMARY KEY,
+      user_id     VARCHAR(50)     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      symbol      VARCHAR(10)     NOT NULL,
+      side        VARCHAR(4)      NOT NULL CHECK (side IN ('buy', 'sell')),
+      shares      NUMERIC(15,6)   NOT NULL,
+      price       NUMERIC(15,4)   NOT NULL,
+      total       NUMERIC(15,2)   NOT NULL,
+      source      VARCHAR(20)     NOT NULL DEFAULT 'market',
+      executed_at TIMESTAMPTZ     DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_txn_user    ON transactions (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_txn_symbol  ON transactions (user_id, symbol)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions (executed_at)`)
+  console.log('✅ Table "transactions" ready')
+
   // ── user_llm_settings ────────────────────────────────────────
   // Stores each user's chosen LLM provider, model, and encrypted API key.
   await client.query(`

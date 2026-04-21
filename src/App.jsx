@@ -12,7 +12,6 @@ import Header        from './components/Layout/Header'
 import AgentPanel    from './components/AgentPanel'
 import Dashboard     from './pages/Dashboard'
 import Portfolio     from './pages/Portfolio'
-import Watchlist     from './pages/Watchlist'
 import StockDetail   from './pages/StockDetail'
 import AdminPanel    from './pages/AdminPanel'
 import History       from './pages/History'
@@ -27,7 +26,6 @@ import Groups        from './pages/Groups'
 const PAGES = {
   dashboard:   Dashboard,
   portfolio:   Portfolio,
-  watchlist:   Watchlist,
   stock:       StockDetail,
   admin:       AdminPanel,
   history:     History,

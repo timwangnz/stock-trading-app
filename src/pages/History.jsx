@@ -17,10 +17,10 @@ import {
   Area, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { BarChart2, Activity, RefreshCw, AlertCircle, Database, TrendingUp } from 'lucide-react'
+import { BarChart2, Activity, RefreshCw, AlertCircle, Database, TrendingUp, ArrowUpCircle, ArrowDownCircle, Bot } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { getAggregates, daysAgo, today } from '../services/polygonApi'
-import { getPortfolioSnapshots, triggerSnapshot } from '../services/apiService'
+import { getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
 import clsx from 'clsx'
 
 // ── Date helpers ─────────────────────────────────────────────────
@@ -86,12 +86,19 @@ export default function History() {
   const portfolio          = state.portfolio ?? []
   const dbReady            = state.dbReady   ?? false   // true once auth + initial load done
 
+  const [activeTab,   setActiveTab]   = useState('performance') // 'performance' | 'trades'
+
   const [data,        setData]        = useState([])
   const [loading,     setLoading]     = useState(false)
   const [snapshotting,setSnapshotting]= useState(false)
   const [error,       setError]       = useState(null)
   const [range,       setRange]       = useState('1Y')   // '1M' | '3M' | '6M' | '1Y'
   const [dataSource,  setDataSource]  = useState(null)   // 'snapshots' | 'estimated'
+
+  // ── Trades tab state ──────────────────────────────────────────
+  const [trades,       setTrades]       = useState([])
+  const [tradesLoading,setTradesLoading]= useState(false)
+  const [tradesError,  setTradesError]  = useState(null)
 
   // ── Fetch all historical data ──────────────────────────────────
   const fetchHistory = useCallback(async () => {
@@ -193,6 +200,25 @@ export default function History() {
     }
   }, [portfolio.length, dbReady])
 
+  // ── Fetch trade log ────────────────────────────────────────────
+  const fetchTrades = useCallback(async () => {
+    if (!dbReady) return
+    setTradesLoading(true)
+    setTradesError(null)
+    try {
+      const rows = await fetchTransactions({ limit: 200 })
+      setTrades(rows)
+    } catch (err) {
+      setTradesError(err.message)
+    } finally {
+      setTradesLoading(false)
+    }
+  }, [dbReady])
+
+  useEffect(() => {
+    if (activeTab === 'trades') fetchTrades()
+  }, [activeTab, fetchTrades])
+
   // ── Take a manual snapshot ─────────────────────────────────────
   const handleSnapshot = async () => {
     setSnapshotting(true)
@@ -266,61 +292,103 @@ export default function History() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-primary font-semibold text-xl">Portfolio History</h1>
-          <div className="flex items-center gap-2 mt-1">
-            <p className="text-muted text-sm">Daily performance vs S&P 500 benchmark</p>
-            {dataSource && (
-              <span className={clsx(
-                'inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border',
-                dataSource === 'snapshots'
-                  ? 'text-gain border-gain/30 bg-gain/10'
-                  : 'text-amber-400 border-amber-400/30 bg-amber-400/10'
-              )}>
-                {dataSource === 'snapshots'
-                  ? <><Database size={9} /> DB snapshots</>
-                  : <><TrendingUp size={9} /> Estimated</>
-                }
-              </span>
-            )}
-          </div>
+          <p className="text-muted text-sm mt-1">
+            {activeTab === 'performance'
+              ? 'Daily performance vs S&P 500 benchmark'
+              : 'All executed buy and sell trades'}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Range selector */}
+          {/* Tab switcher */}
           <div className="flex gap-1 bg-surface-hover border border-border rounded-lg p-1">
-            {['1M','3M','6M','1Y'].map(r => (
+            {[
+              { id: 'performance', label: 'Performance' },
+              { id: 'trades',      label: 'Trades'      },
+            ].map(tab => (
               <button
-                key={r}
-                onClick={() => setRange(r)}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
                 className={clsx(
                   'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                  range === r
+                  activeTab === tab.id
                     ? 'bg-accent-blue text-white'
                     : 'text-muted hover:text-primary'
                 )}
               >
-                {r}
+                {tab.label}
               </button>
             ))}
           </div>
-          {/* Snapshot now */}
-          <button
-            onClick={handleSnapshot}
-            disabled={snapshotting || loading}
-            title="Save today's portfolio value to the database"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-muted hover:text-primary hover:bg-surface-hover text-xs transition-colors disabled:opacity-40"
-          >
-            <Database size={12} className={snapshotting ? 'animate-pulse' : ''} />
-            {snapshotting ? 'Saving…' : 'Snapshot Now'}
-          </button>
-          {/* Refresh */}
-          <button
-            onClick={fetchHistory}
-            disabled={loading}
-            className="p-2 rounded-lg border border-border text-muted hover:text-primary hover:bg-surface-hover transition-colors disabled:opacity-40"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </button>
+
+          {activeTab === 'performance' && (<>
+            {/* Range selector */}
+            <div className="flex gap-1 bg-surface-hover border border-border rounded-lg p-1">
+              {['1M','3M','6M','1Y'].map(r => (
+                <button
+                  key={r}
+                  onClick={() => setRange(r)}
+                  className={clsx(
+                    'px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                    range === r
+                      ? 'bg-accent-blue/20 text-accent-blue'
+                      : 'text-muted hover:text-primary'
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            {/* Snapshot now */}
+            <button
+              onClick={handleSnapshot}
+              disabled={snapshotting || loading}
+              title="Save today's portfolio value to the database"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-muted hover:text-primary hover:bg-surface-hover text-xs transition-colors disabled:opacity-40"
+            >
+              <Database size={12} className={snapshotting ? 'animate-pulse' : ''} />
+              {snapshotting ? 'Saving…' : 'Snapshot Now'}
+            </button>
+            {/* Refresh */}
+            <button
+              onClick={fetchHistory}
+              disabled={loading}
+              className="p-2 rounded-lg border border-border text-muted hover:text-primary hover:bg-surface-hover transition-colors disabled:opacity-40"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </>)}
+
+          {activeTab === 'trades' && (
+            <button
+              onClick={fetchTrades}
+              disabled={tradesLoading}
+              className="p-2 rounded-lg border border-border text-muted hover:text-primary hover:bg-surface-hover transition-colors disabled:opacity-40"
+            >
+              <RefreshCw size={14} className={tradesLoading ? 'animate-spin' : ''} />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Data source badge (performance tab only) */}
+      {activeTab === 'performance' && dataSource && (
+        <div className="flex">
+          <span className={clsx(
+            'inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border',
+            dataSource === 'snapshots'
+              ? 'text-gain border-gain/30 bg-gain/10'
+              : 'text-amber-400 border-amber-400/30 bg-amber-400/10'
+          )}>
+            {dataSource === 'snapshots'
+              ? <><Database size={9} /> DB snapshots</>
+              : <><TrendingUp size={9} /> Estimated</>
+            }
+          </span>
+        </div>
+      )}
+
+      {/* ── PERFORMANCE TAB ─────────────────────────────────────────── */}
+      {activeTab === 'performance' && (<>
 
       {/* Error state */}
       {error && (
@@ -509,6 +577,135 @@ export default function History() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      </>)} {/* end performance tab */}
+
+      {/* ── TRADES TAB ──────────────────────────────────────────────── */}
+      {activeTab === 'trades' && (
+        <div className="space-y-4">
+
+          {tradesError && (
+            <div className="flex items-center gap-3 bg-loss/10 border border-loss/20 text-loss/80 rounded-xl px-4 py-3 text-sm">
+              <AlertCircle size={16} className="shrink-0" />
+              <span>{tradesError}</span>
+            </div>
+          )}
+
+          {tradesLoading && (
+            <div className="h-40 bg-surface-card border border-border rounded-xl flex items-center justify-center gap-3">
+              <RefreshCw size={18} className="text-accent-blue animate-spin" />
+              <span className="text-muted text-sm">Loading trades…</span>
+            </div>
+          )}
+
+          {!tradesLoading && !tradesError && trades.length === 0 && (
+            <div className="bg-surface-card border border-border rounded-xl p-10 flex flex-col items-center gap-3 text-center">
+              <BarChart2 size={36} className="text-muted" />
+              <p className="text-primary font-medium">No trades yet</p>
+              <p className="text-muted text-sm">
+                Trades you make via the Portfolio page or the AI Agent will appear here.
+              </p>
+            </div>
+          )}
+
+          {!tradesLoading && trades.length > 0 && (
+            <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+              {/* Summary bar */}
+              <div className="flex items-center gap-6 px-5 py-3 border-b border-border bg-surface-hover/40">
+                <div className="flex items-center gap-1.5 text-xs text-muted">
+                  <ArrowUpCircle size={13} className="text-gain" />
+                  <span className="font-medium text-primary">
+                    {trades.filter(t => t.side === 'buy').length}
+                  </span>
+                  buys
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-muted">
+                  <ArrowDownCircle size={13} className="text-loss" />
+                  <span className="font-medium text-primary">
+                    {trades.filter(t => t.side === 'sell').length}
+                  </span>
+                  sells
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-muted">
+                  <Bot size={13} className="text-accent-purple" />
+                  <span className="font-medium text-primary">
+                    {trades.filter(t => t.source === 'agent').length}
+                  </span>
+                  via AI agent
+                </div>
+                <div className="ml-auto text-xs text-muted">
+                  Showing last {trades.length} trades
+                </div>
+              </div>
+
+              {/* Trade rows */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-muted text-xs border-b border-border">
+                      <th className="text-left px-5 py-2.5">Date &amp; Time</th>
+                      <th className="text-left px-3 py-2.5">Symbol</th>
+                      <th className="text-left px-3 py-2.5">Side</th>
+                      <th className="text-right px-3 py-2.5">Shares</th>
+                      <th className="text-right px-3 py-2.5">Price</th>
+                      <th className="text-right px-5 py-2.5">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {trades.map(t => {
+                      const dt = new Date(t.executed_at)
+                      const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      const timeStr = dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                      const isBuy = t.side === 'buy'
+                      return (
+                        <tr key={t.id} className="hover:bg-surface-hover/40 transition-colors">
+                          <td className="px-5 py-3">
+                            <p className="text-primary text-xs">{dateStr}</p>
+                            <p className="text-muted text-[10px]">{timeStr}</p>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="font-semibold text-accent-blue font-mono">{t.symbol}</span>
+                            {t.source === 'agent' && (
+                              <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded bg-accent-purple/15 text-accent-purple">
+                                <Bot size={8} /> AI
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={clsx(
+                              'inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full',
+                              isBuy
+                                ? 'bg-gain/15 text-gain'
+                                : 'bg-loss/15 text-loss'
+                            )}>
+                              {isBuy
+                                ? <ArrowUpCircle size={11} />
+                                : <ArrowDownCircle size={11} />}
+                              {isBuy ? 'BUY' : 'SELL'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-right text-secondary font-mono text-xs">
+                            {parseFloat(t.shares).toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                          </td>
+                          <td className="px-3 py-3 text-right text-secondary text-xs font-mono">
+                            ${parseFloat(t.price).toFixed(2)}
+                          </td>
+                          <td className={clsx(
+                            'px-5 py-3 text-right font-semibold text-xs font-mono',
+                            isBuy ? 'text-loss' : 'text-gain'
+                          )}>
+                            {isBuy ? '−' : '+'}{fmt(parseFloat(t.total))}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

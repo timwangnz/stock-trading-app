@@ -4,12 +4,12 @@
  * for quickly jumping to a stock's detail view.
  */
 
-import { useState, useEffect, useRef } from 'react'
-import { Search, X, Loader2, Bot, Sun, Moon } from 'lucide-react'
+import { useState } from 'react'
+import { Bot, Sun, Moon } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import { useTheme } from '../../context/ThemeContext'
-import { searchTickers } from '../../services/polygonApi'
+import StockSearch from '../StockSearch'
 import UserMenu from '../UserMenu'
 
 // Map page keys → human-readable titles
@@ -20,63 +20,17 @@ const PAGE_TITLES = {
   stock:     'Stock Detail',
 }
 
-// How long to wait after the user stops typing before hitting the API (ms)
-const DEBOUNCE_MS = 300
-
 export default function Header({ agentOpen, onToggleAgent }) {
   const { state, dispatch } = useApp()
   const { canTrade } = useAuth()
   const { isDark, toggleTheme } = useTheme()
-  const [query,     setQuery]     = useState('')
-  const [results,   setResults]   = useState([])
-  const [loading,   setLoading]   = useState(false)
-  const [isFocused, setIsFocused] = useState(false)
-  const inputRef   = useRef(null)
-  const debounceRef = useRef(null)
-
-  // ── Live search via Polygon whenever query changes ──────────
-  useEffect(() => {
-    // Clear any pending debounce timer
-    clearTimeout(debounceRef.current)
-
-    if (query.trim().length === 0) {
-      setResults([])
-      setLoading(false)
-      return
-    }
-
-    setLoading(true)
-
-    // Wait for the user to stop typing before firing the API call
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const hits = await searchTickers(query, 8)
-        setResults(hits)
-      } catch {
-        setResults([])
-      } finally {
-        setLoading(false)
-      }
-    }, DEBOUNCE_MS)
-
-    // Cleanup: cancel timer if query changes again before it fires
-    return () => clearTimeout(debounceRef.current)
-  }, [query])
-
-  const showDropdown = isFocused && (loading || results.length > 0)
+  const [searchKey, setSearchKey] = useState(0)  // bump to reset StockSearch after selection
 
   const handleSelect = (symbol) => {
+    if (!symbol) return
     dispatch({ type: ACTIONS.VIEW_STOCK, payload: symbol })
-    setQuery('')
-    setResults([])
-    setIsFocused(false)
-    inputRef.current?.blur()
-  }
-
-  const handleClear = () => {
-    setQuery('')
-    setResults([])
-    inputRef.current?.focus()
+    // Reset the search box by remounting it
+    setSearchKey(k => k + 1)
   }
 
   return (
@@ -103,58 +57,14 @@ export default function Header({ agentOpen, onToggleAgent }) {
 
       {/* Search + User */}
       <div className="flex items-center gap-3">
-      <div className="relative w-72">
-        <div className="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
-          {loading
-            ? <Loader2 size={15} className="text-muted shrink-0 animate-spin" />
-            : <Search  size={15} className="text-muted shrink-0" />
-          }
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Search any stock or ETF…"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            className="bg-transparent text-sm text-primary placeholder-muted outline-none w-full"
-          />
-          {query && (
-            <button onMouseDown={e => { e.preventDefault(); handleClear() }}>
-              <X size={13} className="text-muted hover:text-primary" />
-            </button>
-          )}
-        </div>
-
-        {/* Dropdown — onMouseDown e.preventDefault() keeps the input focused
-            so the onClick on each row fires before blur hides the list */}
-        {showDropdown && (
-          <ul
-            onMouseDown={e => e.preventDefault()}
-            className="absolute top-full mt-1 w-full bg-surface-card border border-border rounded-lg shadow-xl z-50 overflow-hidden"
-          >
-            {loading && results.length === 0 ? (
-              <li className="px-4 py-3 text-muted text-sm">Searching…</li>
-            ) : (
-              results.map(stock => (
-                <li key={stock.symbol}>
-                  <button
-                    onClick={() => handleSelect(stock.symbol)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover transition-colors text-left"
-                  >
-                    <span className="text-accent-blue font-mono text-sm font-semibold w-16 shrink-0">
-                      {stock.symbol}
-                    </span>
-                    <span className="text-muted text-sm truncate">{stock.name}</span>
-                    {stock.type && stock.type !== 'CS' && (
-                      <span className="ml-auto text-faint text-xs shrink-0">{stock.type}</span>
-                    )}
-                  </button>
-                </li>
-              ))
-            )}
-          </ul>
-        )}
+      <div className="w-72">
+        <StockSearch
+          key={searchKey}
+          value=""
+          onChange={handleSelect}
+          onClear={() => {}}
+          placeholder="Search any stock or ETF…"
+        />
       </div>{/* end search */}
 
       {/* Trading Agent toggle — only for users who can trade */}

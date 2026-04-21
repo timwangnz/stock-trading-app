@@ -14,12 +14,13 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { Star, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users } from 'lucide-react'
+import { Bell, BellOff, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users, Plus, X, CheckCircle } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
 import { fetchMyClasses, fetchRelatedStocks } from '../services/apiService'
 import { STOCKS } from '../data/mockData'
 import { useTheme } from '../context/ThemeContext'
+import { usePriceAlerts } from '../hooks/usePriceAlerts'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
 import clsx from 'clsx'
 
@@ -173,6 +174,13 @@ export default function StockDetail() {
   const [errorSnap,    setErrorSnap]    = useState(null)
   const [errorChart,   setErrorChart]   = useState(null)
 
+  // Price alerts
+  const { alerts, addAlert, removeAlert, dismissAlert, checkPrice } = usePriceAlerts(symbol)
+  const [newTarget,    setNewTarget]    = useState('')
+  const [newDirection, setNewDirection] = useState('above')
+  const [showAlertForm, setShowAlertForm] = useState(false)
+  const [newlyFired,   setNewlyFired]   = useState([])   // banners for just-triggered alerts
+
   // ── Reset form state when symbol changes ─────────────────────
   useEffect(() => {
     setActiveForm(null)
@@ -222,9 +230,8 @@ export default function StockDetail() {
   const price     = snapshot?.price     ?? 0
   const change    = snapshot?.change    ?? 0
   const changePct = snapshot?.changePct ?? 0
-  const isWatched    = state.watchlist.includes(symbol)
-  const holding      = state.portfolio.find(h => h.symbol === symbol) ?? null
-  const sharesHeld   = holding?.shares ?? 0
+  const holding    = state.portfolio.find(h => h.symbol === symbol) ?? null
+  const sharesHeld = holding?.shares ?? 0
 
   const firstPrice = chartData[0]?.close ?? 0
   const lastPrice  = chartData[chartData.length - 1]?.close ?? 0
@@ -233,14 +240,24 @@ export default function StockDetail() {
   const high52w = chartData.length ? Math.max(...chartData.map(d => d.high)) : 0
   const low52w  = chartData.length ? Math.min(...chartData.map(d => d.low))  : 0
 
-  // ── Handlers ───────────────────────────────────────────────
-  const handleToggleWatch = () => {
-    dispatch({
-      type: isWatched ? ACTIONS.REMOVE_FROM_WATCHLIST : ACTIONS.ADD_TO_WATCHLIST,
-      payload: symbol,
-    })
+  // Check price alerts whenever live price updates
+  useEffect(() => {
+    if (!price) return
+    const fired = checkPrice(price)
+    if (fired.length > 0) setNewlyFired(prev => [...prev, ...fired])
+  }, [price]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Alert handlers ─────────────────────────────────────────
+  const handleAddAlert = (e) => {
+    e.preventDefault()
+    const t = parseFloat(newTarget)
+    if (isNaN(t) || t <= 0) return
+    addAlert(t, newDirection)
+    setNewTarget('')
+    setShowAlertForm(false)
   }
 
+  // ── Trade handlers ─────────────────────────────────────────
   const openForm = (form) => {
     setShares('')
     setActiveForm(prev => prev === form ? null : form)
@@ -308,18 +325,29 @@ export default function StockDetail() {
             </div>
 
             <div className="flex gap-2">
-              {/* Watch button */}
+              {/* Price alert toggle button */}
               <button
-                onClick={handleToggleWatch}
+                onClick={() => setShowAlertForm(v => !v)}
                 className={clsx(
                   'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
-                  isWatched
-                    ? 'border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/10'
-                    : 'border-border text-muted hover:text-yellow-400 hover:border-yellow-400/40'
+                  alerts.filter(a => !a.dismissed).length > 0
+                    ? 'border-amber-400/40 text-amber-400 hover:bg-amber-400/10'
+                    : showAlertForm
+                      ? 'border-amber-400/40 text-amber-400 bg-amber-400/10'
+                      : 'border-border text-muted hover:text-amber-400 hover:border-amber-400/40'
                 )}
+                title="Price alerts"
               >
-                <Star size={14} className={clsx(isWatched && 'fill-yellow-400')} />
-                {isWatched ? 'Watching' : 'Watch'}
+                {alerts.filter(a => !a.dismissed).length > 0
+                  ? <Bell size={14} className="fill-amber-400" />
+                  : <Bell size={14} />
+                }
+                Alerts
+                {alerts.filter(a => !a.triggered && !a.dismissed).length > 0 && (
+                  <span className="ml-1 bg-amber-400 text-black text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {alerts.filter(a => !a.triggered && !a.dismissed).length}
+                  </span>
+                )}
               </button>
 
               {/* Sell button — only active when user holds shares */}
@@ -445,6 +473,119 @@ export default function StockDetail() {
             <div className="bg-surface-card border border-border rounded-xl px-5 py-4">
               <p className="text-muted text-xs mb-2">About</p>
               <p className="text-muted text-sm leading-relaxed line-clamp-3">{details.description}</p>
+            </div>
+          )}
+
+          {/* ── Triggered alert banners ───────────────── */}
+          {newlyFired.map(a => (
+            <div key={a.id} className="flex items-center gap-3 bg-amber-400/10 border border-amber-400/30 rounded-xl px-4 py-3">
+              <CheckCircle size={15} className="text-amber-400 shrink-0" />
+              <p className="text-amber-300 text-sm flex-1">
+                <strong>{symbol}</strong> hit your price alert — {a.direction === 'above' ? '≥' : '≤'} ${a.targetPrice.toFixed(2)}
+                {price > 0 && <span className="text-amber-400/70 ml-1">(now ${price.toFixed(2)})</span>}
+              </p>
+              <button
+                onClick={() => {
+                  dismissAlert(a.id)
+                  setNewlyFired(prev => prev.filter(f => f.id !== a.id))
+                }}
+                className="text-amber-400/60 hover:text-amber-400 transition-colors shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+
+          {/* ── Price alerts panel ────────────────────── */}
+          {showAlertForm && (
+            <div className="bg-surface-card border border-border rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bell size={14} className="text-amber-400" />
+                  <p className="text-primary text-sm font-medium">Price Alerts</p>
+                </div>
+                <button onClick={() => setShowAlertForm(false)} className="text-muted hover:text-primary transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Add alert form */}
+              <form onSubmit={handleAddAlert} className="flex items-center gap-2 flex-wrap">
+                <span className="text-muted text-sm shrink-0">Alert me when {symbol} goes</span>
+                <select
+                  value={newDirection}
+                  onChange={e => setNewDirection(e.target.value)}
+                  className="bg-surface-hover border border-border rounded-lg px-2.5 py-1.5 text-primary text-sm focus:outline-none focus:border-amber-400/50"
+                >
+                  <option value="above">above</option>
+                  <option value="below">below</option>
+                </select>
+                <div className="flex items-center gap-1 bg-surface-hover border border-border rounded-lg px-2.5 py-1.5 focus-within:border-amber-400/50 transition-colors">
+                  <span className="text-muted text-sm">$</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    placeholder={price > 0 ? price.toFixed(2) : '0.00'}
+                    value={newTarget}
+                    onChange={e => setNewTarget(e.target.value)}
+                    className="bg-transparent text-primary text-sm outline-none w-24"
+                    autoFocus
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!newTarget || isNaN(parseFloat(newTarget))}
+                  className="flex items-center gap-1.5 bg-amber-400/20 hover:bg-amber-400/30 disabled:opacity-40 text-amber-400 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Plus size={13} /> Set Alert
+                </button>
+              </form>
+
+              {/* Alert list */}
+              {alerts.length > 0 ? (
+                <div className="space-y-2">
+                  {alerts.map(a => (
+                    <div
+                      key={a.id}
+                      className={clsx(
+                        'flex items-center gap-3 rounded-lg px-3 py-2.5 border',
+                        a.triggered
+                          ? 'bg-amber-400/5 border-amber-400/20'
+                          : 'bg-surface-hover border-border'
+                      )}
+                    >
+                      {a.triggered
+                        ? <CheckCircle size={13} className="text-amber-400 shrink-0" />
+                        : <Bell size={13} className="text-muted shrink-0" />
+                      }
+                      <p className="text-sm flex-1">
+                        <span className={a.triggered ? 'text-amber-400' : 'text-secondary'}>
+                          {a.direction === 'above' ? '≥' : '≤'} ${a.targetPrice.toFixed(2)}
+                        </span>
+                        {a.triggered && <span className="text-amber-400/60 text-xs ml-2">● triggered</span>}
+                        {!a.triggered && price > 0 && (
+                          <span className="text-faint text-xs ml-2">
+                            {a.direction === 'above'
+                              ? `$${(a.targetPrice - price).toFixed(2)} away`
+                              : `$${(price - a.targetPrice).toFixed(2)} away`}
+                          </span>
+                        )}
+                      </p>
+                      <button
+                        onClick={() => removeAlert(a.id)}
+                        className="text-faint hover:text-loss transition-colors shrink-0"
+                        title="Remove alert"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted text-xs">No alerts set for {symbol} yet.</p>
+              )}
             </div>
           )}
         </>

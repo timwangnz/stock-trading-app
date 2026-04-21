@@ -82,6 +82,21 @@ export function fetchPortfolio() {
   return request('GET', '/portfolio')
 }
 
+export function fetchCash() {
+  return request('GET', '/portfolio/cash')
+}
+
+/** Buy at current live market price — price is fetched server-side */
+export function buyAtMarket(symbol, shares) {
+  return request('POST', '/portfolio/buy', { symbol, shares })
+}
+
+/** Sell at current live market price — price is fetched server-side */
+export function sellAtMarket(symbol, shares) {
+  return request('POST', '/portfolio/sell', { symbol, shares })
+}
+
+/** Manual upsert — teacher/admin only */
 export function upsertHolding(symbol, shares, avgCost) {
   return request('PUT', `/portfolio/${symbol}`, { shares, avgCost })
 }
@@ -100,6 +115,15 @@ export function triggerSnapshot() {
 /** Fetch stored daily snapshots between two ISO date strings (YYYY-MM-DD) */
 export function getPortfolioSnapshots(from, to) {
   return request('GET', `/portfolio/snapshots?from=${from}&to=${to}`)
+}
+
+// ── Transactions ─────────────────────────────────────────────────
+
+/** Fetch user's trade history (most recent first) */
+export function fetchTransactions({ limit = 100, offset = 0, symbol } = {}) {
+  const params = new URLSearchParams({ limit, offset })
+  if (symbol) params.set('symbol', symbol)
+  return request('GET', `/transactions?${params}`)
 }
 
 // ── Watchlist ───────────────────────────────────────────────────

@@ -40,7 +40,8 @@ const initialState = {
 export const ACTIONS = {
   NAVIGATE:              'NAVIGATE',
   VIEW_STOCK:            'VIEW_STOCK',
-  LOAD_DATA:             'LOAD_DATA',             // initial DB load
+  LOAD_DATA:             'LOAD_DATA',             // initial DB load (portfolio + watchlist)
+  RELOAD_PORTFOLIO:      'RELOAD_PORTFOLIO',      // refresh portfolio only (after market trades)
   ADD_TO_WATCHLIST:      'ADD_TO_WATCHLIST',
   REMOVE_FROM_WATCHLIST: 'REMOVE_FROM_WATCHLIST',
   ADD_TO_PORTFOLIO:      'ADD_TO_PORTFOLIO',
@@ -61,10 +62,14 @@ function appReducer(state, action) {
     case ACTIONS.LOAD_DATA:
       return {
         ...state,
-        portfolio: action.payload.portfolio,
-        watchlist: action.payload.watchlist,
+        portfolio: action.payload.portfolio ?? state.portfolio,
+        watchlist: action.payload.watchlist ?? state.watchlist,
         dbReady:   true,
       }
+
+    // Refresh portfolio only — leaves watchlist and everything else untouched
+    case ACTIONS.RELOAD_PORTFOLIO:
+      return { ...state, portfolio: action.payload }
 
     case ACTIONS.ADD_TO_WATCHLIST: {
       if (state.watchlist.includes(action.payload)) return state

@@ -5,7 +5,7 @@
  * Teachers see a mode toggle: Teaching ↔ Trading.
  */
 
-import { LayoutDashboard, Briefcase, Star, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight } from 'lucide-react'
+import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
@@ -15,7 +15,6 @@ import clsx from 'clsx'
 const STUDENT_NAV = [
   { label: 'Dashboard',   page: 'dashboard',   icon: LayoutDashboard },
   { label: 'Portfolio',   page: 'portfolio',   icon: Briefcase },
-  { label: 'Watchlist',   page: 'watchlist',   icon: Star },
   { label: 'History',     page: 'history',     icon: BarChart2 },
   { label: 'Leaderboard', page: 'leaderboard', icon: Trophy },
   { label: 'Ideas',       page: 'ideas',       icon: Lightbulb },
@@ -103,6 +102,24 @@ export default function Sidebar() {
       {/* Portfolio sparkline — only in student/trading mode */}
       {!inTeacherMode && <PortfolioSparkline />}
 
+      {/* Become a Teacher — only for regular users (not teacher/admin/readonly) */}
+      {role === 'user' && (
+        <div className="px-3 pb-2">
+          <button
+            onClick={() => navigate('classroom')}
+            className={clsx(
+              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+              state.currentPage === 'classroom'
+                ? 'bg-purple-400/15 text-purple-400 font-medium'
+                : 'text-purple-400/50 hover:bg-purple-400/10 hover:text-purple-400'
+            )}
+          >
+            <GraduationCap size={17} />
+            Become a Teacher
+          </button>
+        </div>
+      )}
+
       {/* Admin link — only visible to admins */}
       {isAdmin && (
         <div className="px-3 pb-2">
@@ -163,7 +180,7 @@ export default function Sidebar() {
             )}>
               {role === 'admin'    && 'Full access + admin panel'}
               {role === 'teacher'  && (inTeacherMode ? 'Teaching mode' : 'Trading mode')}
-              {role === 'premium'  && 'Full portfolio & watchlist access'}
+              {role === 'premium'  && 'Full portfolio & trading access'}
               {role === 'user'     && 'Can edit portfolio & watchlist'}
               {role === 'readonly' && 'View only — no edits'}
             </p>
