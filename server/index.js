@@ -104,29 +104,30 @@ app.use(cors())
 app.use(express.json({ limit: '16kb' }))
 
 // ── Rate limiting ─────────────────────────────────────────────────
-// Auth endpoints: max 40 requests per 15 min per IP
-// (covers page reloads, token refreshes, and dev testing)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 40,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests — please try again later' },
-})
+// Skipped entirely in development — all local requests share 127.0.0.1
+// so limits would fire constantly during normal dev usage.
+if (isProd) {
+  // Auth endpoints: max 40 requests per 15 min per IP
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests — please try again later' },
+  })
 
-// General API: max 1500 requests per 15 min per IP (100/min)
-// Dashboard + Portfolio + Market data each make several calls per page load;
-// a comfortable browsing session with live prices easily exceeds 300/15min.
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 1500,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests — please try again later' },
-})
+  // General API: max 1500 requests per 15 min per IP (100/min)
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1500,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests — please try again later' },
+  })
 
-app.use('/api/auth', authLimiter)
-app.use('/api', apiLimiter)
+  app.use('/api/auth', authLimiter)
+  app.use('/api', apiLimiter)
+}
 
 // ── Serve React build (production only) ─────────────────────────
 if (isProd) {
