@@ -717,13 +717,16 @@ export default function Portfolio() {
                             >
                               Sell
                             </button>
-                            <button
-                              onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_PORTFOLIO, payload: h.symbol })}
-                              title="Remove holding"
-                              className="text-faint hover:text-loss transition-colors ml-1"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            {/* Trash only for teacher/admin — students must sell at market price */}
+                            {canManualPrice && (
+                              <button
+                                onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_PORTFOLIO, payload: h.symbol })}
+                                title="Remove holding"
+                                className="text-faint hover:text-loss transition-colors ml-1"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <span className="text-faint text-xs italic text-right block">view only</span>
