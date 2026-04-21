@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown } from 'lucide-react'
+import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown, Pencil, BadgeDollarSign } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
@@ -12,7 +12,7 @@ import { useApp, ACTIONS } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
-import { buyAtMarket, sellAtMarket, fetchPortfolio, fetchCash, getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
+import { buyAtMarket, sellAtMarket, sellManual, addCash, upsertHolding, fetchPortfolio, fetchCash, getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
 import StockTreemap from '../components/StockTreemap'
 import StockSearch from '../components/StockSearch'
@@ -268,50 +268,46 @@ function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
  * @param {function} onClose
  */
 function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, prefillShares }) {
+  const livePrice = holding.price > 0 ? holding.price.toFixed(2) : ''
   const [qty,   setQty]   = useState(prefillShares != null ? String(prefillShares) : '')
-  const [price, setPrice] = useState(mode === 'buy' ? holding.price.toFixed(2) : '')
+  const [price, setPrice] = useState(livePrice)
   const [error, setError] = useState('')
 
   const isBuy  = mode === 'buy'
   const shares = parseFloat(qty)
-  // For regular users, always use the live price shown on screen
-  const cost   = canManualPrice ? parseFloat(price) : holding.price
+  // For buys: teacher/admin use their typed price, students get locked live price
+  // For sells: teacher/admin use their typed price, students use live price
+  const effectivePrice = canManualPrice ? parseFloat(price) : holding.price
 
   // Live preview calculations
-  const totalCash = !isNaN(shares) && !isNaN(cost) ? shares * cost : null
-
-  // For sells: what % of the holding is being sold
-  const sellPct = !isNaN(shares) && holding.shares > 0
-    ? Math.min(100, (shares / holding.shares) * 100).toFixed(1)
-    : null
-
-  // New avg cost after a buy (weighted average formula)
-  const newAvgCost = isBuy && !isNaN(shares) && !isNaN(cost) && shares > 0
-    ? ((holding.avgCost * holding.shares) + (cost * shares)) / (holding.shares + shares)
+  const totalCash  = !isNaN(shares) && !isNaN(effectivePrice) ? shares * effectivePrice : null
+  const sellPct    = !isNaN(shares) && holding.shares > 0
+    ? Math.min(100, (shares / holding.shares) * 100).toFixed(1) : null
+  const newAvgCost = isBuy && !isNaN(shares) && !isNaN(effectivePrice) && shares > 0
+    ? ((holding.avgCost * holding.shares) + (effectivePrice * shares)) / (holding.shares + shares)
     : null
 
   const handleSubmit = (e) => {
     e.preventDefault()
     setError('')
-
     if (isNaN(shares) || shares <= 0) { setError('Enter a valid number of shares.'); return }
-
     if (isBuy) {
-      if (isNaN(cost) || cost <= 0) { setError('Enter a valid price.'); return }
-      onBuy({ symbol: holding.symbol, shares, avgCost: cost })
+      if (isNaN(effectivePrice) || effectivePrice <= 0) { setError('Enter a valid price.'); return }
+      onBuy({ symbol: holding.symbol, shares, avgCost: effectivePrice })
     } else {
       if (shares > holding.shares) {
         setError(`You only hold ${holding.shares} shares — can't sell more than that.`)
         return
       }
-      onSell({ symbol: holding.symbol, shares })
+      // Pass price for teacher/admin so the server can credit the correct amount
+      onSell({ symbol: holding.symbol, shares, price: canManualPrice ? effectivePrice : undefined })
     }
     onClose()
   }
 
   return (
     <tr className="bg-surface-hover/50 border-t border-border">
-      <td colSpan={7} className="px-5 py-4">
+      <td colSpan={8} className="px-5 py-4">
         <form onSubmit={handleSubmit}>
           <div className="flex items-start gap-4 flex-wrap">
 
@@ -336,30 +332,33 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
               />
             </div>
 
-            {/* Price input (buy only) — editable for admin/teacher, locked for students */}
-            {isBuy && (
-              <div className="flex flex-col gap-1">
-                <label className="text-muted text-xs">Price per share ($)</label>
-                {canManualPrice ? (
-                  <input
-                    type="number" min="0.01" step="any"
-                    value={price} onChange={e => setPrice(e.target.value)}
-                    className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
-                  />
-                ) : (
-                  <div className="flex items-center gap-1.5 px-3 py-2 bg-surface-card border border-border rounded-lg w-36 text-sm text-primary">
-                    <Lock size={11} className="text-muted shrink-0" />
-                    ${holding.price.toFixed(2)}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Price input — editable for teacher/admin on both buy and sell; locked for students */}
+            <div className="flex flex-col gap-1">
+              <label className="text-muted text-xs">Price per share ($)</label>
+              {canManualPrice ? (
+                <input
+                  type="number" min="0" step="any"
+                  value={price} onChange={e => setPrice(e.target.value)}
+                  className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
+                />
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-2 bg-surface-card border border-border rounded-lg w-36 text-sm text-primary">
+                  <Lock size={11} className="text-muted shrink-0" />
+                  ${holding.price.toFixed(2)}
+                </div>
+              )}
+            </div>
 
             {/* Live preview */}
             {qty && !isNaN(shares) && shares > 0 && (
               <div className="flex flex-col gap-1 mt-2 text-xs text-muted min-w-0">
-                {isBuy && totalCash !== null && (
-                  <p>Total cost: <span className="text-primary font-medium">${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                {totalCash !== null && (
+                  <p>
+                    {isBuy ? 'Total cost' : 'Proceeds'}:{' '}
+                    <span className="text-primary font-medium">
+                      ${totalCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </p>
                 )}
                 {isBuy && newAvgCost !== null && (
                   <p>New avg cost: <span className="text-primary font-medium">${newAvgCost.toFixed(2)}</span></p>
@@ -369,9 +368,6 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
                     Selling <span className="text-primary font-medium">{sellPct}%</span> of position
                     {shares >= holding.shares && <span className="text-loss ml-1">(full exit)</span>}
                   </p>
-                )}
-                {!isBuy && totalCash !== null && holding.price > 0 && (
-                  <p>Proceeds: <span className="text-primary font-medium">${(shares * holding.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
                 )}
               </div>
             )}
@@ -383,17 +379,73 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
                 type="submit"
                 className={clsx(
                   'text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors',
-                  isBuy
-                    ? 'bg-gain hover:bg-gain/80'
-                    : 'bg-loss hover:bg-loss/80'
+                  isBuy ? 'bg-gain hover:bg-gain/80' : 'bg-loss hover:bg-loss/80'
                 )}
               >
                 {isBuy ? 'Confirm Buy' : 'Confirm Sell'}
               </button>
-              <button
-                type="button" onClick={onClose}
-                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors"
-              >
+              <button type="button" onClick={onClose}
+                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </form>
+      </td>
+    </tr>
+  )
+}
+
+// ── EditPanel (teacher/admin only) ────────────────────────────────
+// Inline row for correcting shares and avg cost on an existing holding.
+function EditPanel({ holding, onClose, onSave }) {
+  const [shares,  setShares]  = useState(String(holding.shares))
+  const [avgCost, setAvgCost] = useState(holding.avgCost.toFixed(2))
+  const [error,   setError]   = useState('')
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    setError('')
+    const s = parseFloat(shares)
+    const c = parseFloat(avgCost)
+    if (isNaN(s) || s <= 0) { setError('Enter valid shares.'); return }
+    if (isNaN(c) || c <= 0) { setError('Enter valid avg cost.'); return }
+    onSave({ symbol: holding.symbol, shares: s, avgCost: c })
+  }
+
+  return (
+    <tr className="bg-surface-hover/50 border-t border-border">
+      <td colSpan={8} className="px-5 py-4">
+        <form onSubmit={handleSubmit}>
+          <div className="flex items-start gap-4 flex-wrap">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-accent-blue shrink-0 mt-2">
+              <Pencil size={13} />
+              Edit {holding.symbol}
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-muted text-xs">Shares</label>
+              <input
+                type="number" min="0.001" step="any" autoFocus
+                value={shares} onChange={e => setShares(e.target.value)}
+                className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-40 focus:border-accent-blue/50 transition-colors"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-muted text-xs">Avg Cost ($)</label>
+              <input
+                type="number" min="0.01" step="any"
+                value={avgCost} onChange={e => setAvgCost(e.target.value)}
+                className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
+              />
+            </div>
+            <div className="flex items-center gap-2 mt-auto ml-auto shrink-0">
+              {error && <p className="text-loss text-xs">{error}</p>}
+              <button type="submit"
+                className="bg-accent-blue hover:bg-accent-blue/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                Save Changes
+              </button>
+              <button type="button" onClick={onClose}
+                className="text-muted hover:text-primary text-sm px-3 py-2 transition-colors">
                 Cancel
               </button>
             </div>
@@ -411,7 +463,12 @@ export default function Portfolio() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [tradeError,  setTradeError]  = useState(null)
   const [cash,        setCash]        = useState(null)
-  // activePanel: { symbol, mode: 'buy'|'sell', prefillShares?: number } or null
+  // Add cash form (teacher/admin only)
+  const [showAddCash,   setShowAddCash]   = useState(false)
+  const [addCashAmount, setAddCashAmount] = useState('')
+  const [addCashError,  setAddCashError]  = useState('')
+  const [addCashLoading, setAddCashLoading] = useState(false)
+  // activePanel: { symbol, mode: 'buy'|'sell'|'edit', prefillShares?: number } or null
   const [activePanel,      setActivePanel]      = useState(null)
   // expandedSymbols: Set of symbols whose lot rows are visible
   const [expandedSymbols,  setExpandedSymbols]  = useState(new Set())
@@ -514,14 +571,65 @@ export default function Portfolio() {
         </div>
 
         <div className="bg-surface-card border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <DollarSign size={14} className="text-accent-blue" />
-            <p className="text-muted text-xs">Cash Available</p>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <DollarSign size={14} className="text-accent-blue" />
+              <p className="text-muted text-xs">Cash Available</p>
+            </div>
+            {canManualPrice && (
+              <button
+                onClick={() => { setShowAddCash(v => !v); setAddCashAmount(''); setAddCashError('') }}
+                title="Add or deduct cash"
+                className="text-faint hover:text-accent-blue transition-colors"
+              >
+                <BadgeDollarSign size={14} />
+              </button>
+            )}
           </div>
           <p className="text-accent-blue font-bold text-2xl">
             ${(cash ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-muted text-xs mt-0.5">buying power</p>
+          {showAddCash ? (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                setAddCashError('')
+                const amt = parseFloat(addCashAmount)
+                if (isNaN(amt) || amt === 0) { setAddCashError('Enter a non-zero amount.'); return }
+                setAddCashLoading(true)
+                try {
+                  const { cash: newCash } = await addCash(amt)
+                  setCash(newCash)
+                  setShowAddCash(false)
+                  setAddCashAmount('')
+                } catch (err) {
+                  setAddCashError(err.message)
+                } finally {
+                  setAddCashLoading(false)
+                }
+              }}
+              className="mt-2 flex items-center gap-1.5"
+            >
+              <input
+                type="number" step="any" autoFocus
+                placeholder="e.g. 500 or -100"
+                value={addCashAmount}
+                onChange={e => setAddCashAmount(e.target.value)}
+                className="bg-surface-hover text-primary text-xs rounded px-2 py-1 outline-none border border-border w-28 focus:border-accent-blue/50"
+              />
+              <button
+                type="submit"
+                disabled={addCashLoading}
+                className="bg-accent-blue hover:bg-accent-blue/80 disabled:opacity-40 text-white text-xs font-medium px-2 py-1 rounded transition-colors"
+              >
+                {addCashLoading ? '…' : 'Apply'}
+              </button>
+              <button type="button" onClick={() => setShowAddCash(false)} className="text-muted hover:text-primary text-xs transition-colors">✕</button>
+              {addCashError && <p className="text-loss text-[10px]">{addCashError}</p>}
+            </form>
+          ) : (
+            <p className="text-muted text-xs mt-0.5">buying power</p>
+          )}
         </div>
 
         <div className="bg-surface-card border border-border rounded-xl p-4">
@@ -640,6 +748,10 @@ export default function Portfolio() {
                     activePanel?.prefillShares === prefillShares
                   setActivePanel(already ? null : { symbol: h.symbol, mode, prefillShares })
                 }
+                const toggleEdit = () => {
+                  const already = panelOpen && panelMode === 'edit'
+                  setActivePanel(already ? null : { symbol: h.symbol, mode: 'edit' })
+                }
 
                 return (
                   <>
@@ -717,15 +829,29 @@ export default function Portfolio() {
                             >
                               Sell
                             </button>
-                            {/* Trash only for teacher/admin — students must sell at market price */}
+                            {/* Edit + Trash only for teacher/admin */}
                             {canManualPrice && (
-                              <button
-                                onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_PORTFOLIO, payload: h.symbol })}
-                                title="Remove holding"
-                                className="text-faint hover:text-loss transition-colors ml-1"
-                              >
-                                <Trash2 size={13} />
-                              </button>
+                              <>
+                                <button
+                                  onClick={toggleEdit}
+                                  title="Edit shares / avg cost"
+                                  className={clsx(
+                                    'p-1 rounded transition-colors ml-1',
+                                    panelOpen && panelMode === 'edit'
+                                      ? 'text-accent-blue'
+                                      : 'text-faint hover:text-accent-blue'
+                                  )}
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  onClick={() => dispatch({ type: ACTIONS.REMOVE_FROM_PORTFOLIO, payload: h.symbol })}
+                                  title="Remove holding"
+                                  className="text-faint hover:text-loss transition-colors"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
                             )}
                           </div>
                         ) : (
@@ -804,8 +930,25 @@ export default function Portfolio() {
                       )
                     })}
 
+                    {/* Inline edit panel (teacher/admin only) */}
+                    {panelOpen && panelMode === 'edit' && (
+                      <EditPanel
+                        key={`edit-${h.symbol}`}
+                        holding={h}
+                        onClose={() => setActivePanel(null)}
+                        onSave={async ({ symbol, shares, avgCost }) => {
+                          setTradeError(null)
+                          try {
+                            await upsertHolding(symbol, shares, avgCost)
+                            await reloadPortfolio()
+                            setActivePanel(null)
+                          } catch (err) { setTradeError(err.message) }
+                        }}
+                      />
+                    )}
+
                     {/* Inline trade panel — renders as a full-width row beneath */}
-                    {panelOpen && (
+                    {panelOpen && (panelMode === 'buy' || panelMode === 'sell') && (
                       <TradePanel
                         key={`panel-${h.symbol}-${activePanel?.lotIdx ?? 'main'}`}
                         mode={panelMode}
@@ -817,6 +960,8 @@ export default function Portfolio() {
                           setTradeError(null)
                           try {
                             if (canManualPrice) {
+                              // Teacher/admin manual buy: update portfolio at specified price,
+                              // no cash deducted (admin override)
                               dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })
                             } else {
                               await buyAtMarket(payload.symbol, payload.shares)
@@ -828,8 +973,10 @@ export default function Portfolio() {
                         onSell={async (payload) => {
                           setTradeError(null)
                           try {
-                            if (canManualPrice) {
-                              dispatch({ type: ACTIONS.SELL_SHARES, payload })
+                            if (canManualPrice && payload.price != null) {
+                              // Teacher/admin sell at specified price — server credits cash
+                              await sellManual(payload.symbol, payload.shares, payload.price)
+                              await reloadPortfolio()
                             } else {
                               await sellAtMarket(payload.symbol, payload.shares)
                               await reloadPortfolio()

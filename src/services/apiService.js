@@ -96,6 +96,16 @@ export function sellAtMarket(symbol, shares) {
   return request('POST', '/portfolio/sell', { symbol, shares })
 }
 
+/** Sell at a manually specified price — teacher/admin only */
+export function sellManual(symbol, shares, price) {
+  return request('POST', '/portfolio/sell', { symbol, shares, price })
+}
+
+/** Add (or deduct if negative) cash — teacher/admin only */
+export function addCash(amount) {
+  return request('POST', '/portfolio/cash/add', { amount })
+}
+
 /** Manual upsert — teacher/admin only */
 export function upsertHolding(symbol, shares, avgCost) {
   return request('PUT', `/portfolio/${symbol}`, { shares, avgCost })

@@ -654,15 +654,31 @@ app.post('/api/portfolio/buy', requirePermission(PERMISSIONS.TRADE), async (req,
   }
 })
 
-// POST /api/portfolio/sell — sell at current market price (students)
+// POST /api/portfolio/sell — sell shares and credit cash
+// Students: always uses live market price fetched server-side
+// Teacher/admin: can pass optional { price } body param to sell at a manual price
 app.post('/api/portfolio/sell', requirePermission(PERMISSIONS.TRADE), async (req, res) => {
   const sym    = (req.body.symbol || '').toUpperCase().trim()
   const shares = parseFloat(req.body.shares)
   if (!SYMBOL_RE.test(sym))         return res.status(400).json({ error: 'Invalid symbol' })
   if (isNaN(shares) || shares <= 0) return res.status(400).json({ error: 'Invalid shares' })
 
+  // Only teacher/admin may set a manual sell price
+  const canManualPrice = ['teacher', 'admin'].includes(req.user.role)
+  const manualPrice    = req.body.price != null ? parseFloat(req.body.price) : null
+  if (manualPrice !== null && !canManualPrice) {
+    return res.status(403).json({ error: 'Only teachers and admins may set a manual sell price' })
+  }
+
   try {
-    const price = await fetchLivePrice(sym)
+    // Resolve price: manual (teacher/admin) or live market (everyone else)
+    let price
+    if (manualPrice !== null && canManualPrice) {
+      if (isNaN(manualPrice) || manualPrice < 0) return res.status(400).json({ error: 'Invalid price' })
+      price = manualPrice
+    } else {
+      price = await fetchLivePrice(sym)
+    }
 
     const { rows: [existing] } = await pool.query(
       'SELECT shares, avg_cost FROM portfolio WHERE user_id = $1 AND symbol = $2',
@@ -683,8 +699,9 @@ app.post('/api/portfolio/sell', requirePermission(PERMISSIONS.TRADE), async (req
     }
     const proceeds = shares * (price ?? 0)
     const newCash  = await adjustCash(req.user.id, proceeds)
+    const source   = canManualPrice ? 'manual' : 'market'
     audit(req.user.id, 'sell', { symbol: sym, shares, price: price ?? null, proceeds }, req)
-    if (price) recordTransaction(req.user.id, sym, 'sell', shares, price, 'market')
+    if (price) recordTransaction(req.user.id, sym, 'sell', shares, price, source)
     res.json({ symbol: sym, remaining, price, cash: newCash })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -696,6 +713,27 @@ app.get('/api/portfolio/cash', async (req, res) => {
   try {
     const cash = await getCash(req.user.id)
     res.json({ cash })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/portfolio/cash/add — teacher/admin: manually adjust cash balance
+// amount can be positive (add) or negative (deduct), floor enforced at $0
+app.post('/api/portfolio/cash/add', requireRole('teacher'), async (req, res) => {
+  const amount = parseFloat(req.body.amount)
+  if (isNaN(amount) || amount === 0) {
+    return res.status(400).json({ error: 'amount must be a non-zero number' })
+  }
+  try {
+    // Prevent cash from going below $0
+    const current = await getCash(req.user.id)
+    if (amount < 0 && current + amount < 0) {
+      return res.status(400).json({ error: `Cannot deduct more than current balance ($${current.toFixed(2)})` })
+    }
+    const newCash = await adjustCash(req.user.id, amount)
+    audit(req.user.id, 'add_cash', { amount, newCash }, req)
+    res.json({ cash: newCash })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
