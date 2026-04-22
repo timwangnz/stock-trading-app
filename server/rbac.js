@@ -14,7 +14,9 @@
 
 // ── Role hierarchy ─────────────────────────────────────────────
 // Higher index = more permissions. Used to check "at least this role".
-export const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'teacher', 'admin']
+// 'student' sits between 'user' and 'premium'.
+// It is ONLY assigned when a user successfully joins a class — never at signup.
+export const ROLE_HIERARCHY = ['readonly', 'user', 'student', 'premium', 'teacher', 'admin']
 
 // ── Permissions ────────────────────────────────────────────────
 // Named permissions map to the minimum role required.
@@ -63,4 +65,20 @@ export function requireRole(role) {
  */
 export function requirePermission(permission) {
   return requireRole(permission)
+}
+
+/**
+ * Middleware — allows any authenticated user who is NOT a student.
+ * Grants: user, premium, teacher, admin.
+ * Blocks: readonly (not logged in enough) and student (class-only role).
+ */
+export function requireNonStudent(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' })
+  if (!hasRole(req.user.role, 'user')) {
+    return res.status(403).json({ error: 'Forbidden — requires at least user role' })
+  }
+  if (req.user.role === 'student') {
+    return res.status(403).json({ error: 'Forbidden — not available for student accounts' })
+  }
+  next()
 }

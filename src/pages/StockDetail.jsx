@@ -14,10 +14,11 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { Bell, BellOff, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users, Plus, X, CheckCircle } from 'lucide-react'
+import { Bell, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users, Plus, X, CheckCircle } from 'lucide-react'
+import FinancialsPanel from '../components/FinancialsPanel'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
-import { fetchMyClasses, fetchRelatedStocks } from '../services/apiService'
+import { fetchMyClasses, fetchRelatedStocks, buyAtMarket, sellAtMarket, fetchPortfolio } from '../services/apiService'
 import { STOCKS } from '../data/mockData'
 import { useTheme } from '../context/ThemeContext'
 import { usePriceAlerts } from '../hooks/usePriceAlerts'
@@ -161,9 +162,11 @@ export default function StockDetail() {
   const { chart: chartTheme } = useTheme()
   const symbol = state.selectedStock
 
-  const [range,      setRange]      = useState('3M')
-  const [activeForm, setActiveForm] = useState(null)   // null | 'buy' | 'sell'
-  const [shares,     setShares]     = useState('')
+  const [range,        setRange]        = useState('3M')
+  const [activeForm,   setActiveForm]   = useState(null)   // null | 'buy' | 'sell'
+  const [shares,       setShares]       = useState('')
+  const [tradeLoading, setTradeLoading] = useState(false)
+  const [tradeError,   setTradeError]   = useState(null)
 
   // Separate loading/error states for snapshot vs chart data
   const [snapshot,     setSnapshot]     = useState(null)
@@ -260,25 +263,50 @@ export default function StockDetail() {
   // ── Trade handlers ─────────────────────────────────────────
   const openForm = (form) => {
     setShares('')
+    setTradeError(null)
     setActiveForm(prev => prev === form ? null : form)
   }
 
-  const handleBuy = (e) => {
+  // Reload portfolio state from server after a trade
+  const reloadPortfolio = async () => {
+    const fresh = await fetchPortfolio()
+    dispatch({ type: ACTIONS.RELOAD_PORTFOLIO, payload: fresh })
+  }
+
+  const handleBuy = async (e) => {
     e.preventDefault()
     const sh = parseFloat(shares)
     if (isNaN(sh) || sh <= 0) return
-    dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload: { symbol, shares: sh, avgCost: price } })
-    setShares('')
-    setActiveForm(null)
+    setTradeLoading(true)
+    setTradeError(null)
+    try {
+      await buyAtMarket(symbol, sh)
+      await reloadPortfolio()
+      setShares('')
+      setActiveForm(null)
+    } catch (err) {
+      setTradeError(err.message || 'Buy failed — please try again.')
+    } finally {
+      setTradeLoading(false)
+    }
   }
 
-  const handleSell = (e) => {
+  const handleSell = async (e) => {
     e.preventDefault()
     const sh = parseFloat(shares)
     if (isNaN(sh) || sh <= 0 || sh > sharesHeld) return
-    dispatch({ type: ACTIONS.SELL_SHARES, payload: { symbol, shares: sh } })
-    setShares('')
-    setActiveForm(null)
+    setTradeLoading(true)
+    setTradeError(null)
+    try {
+      await sellAtMarket(symbol, sh)
+      await reloadPortfolio()
+      setShares('')
+      setActiveForm(null)
+    } catch (err) {
+      setTradeError(err.message || 'Sell failed — please try again.')
+    } finally {
+      setTradeLoading(false)
+    }
   }
 
   if (errorSnap) return <ErrorMessage error={errorSnap} />
@@ -394,7 +422,7 @@ export default function StockDetail() {
           {activeForm === 'buy' && (
             <form
               onSubmit={handleBuy}
-              className="bg-surface-card border border-gain/20 rounded-xl p-4 flex items-center gap-3"
+              className="bg-surface-card border border-gain/20 rounded-xl p-4 flex items-center gap-3 flex-wrap"
             >
               <TrendingUp size={15} className="text-gain shrink-0" />
               <p className="text-muted text-sm shrink-0">
@@ -403,7 +431,7 @@ export default function StockDetail() {
               <input
                 type="number" min="0.001" step="any" placeholder="Shares"
                 value={shares} onChange={e => setShares(e.target.value)}
-                autoFocus
+                autoFocus disabled={tradeLoading}
                 className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border focus:border-gain/40 transition-colors"
                 required
               />
@@ -412,10 +440,11 @@ export default function StockDetail() {
                   = <span className="text-primary font-medium">${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </p>
               )}
-              <button type="submit" className="bg-gain hover:bg-gain/80 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
-                Confirm Buy
+              {tradeError && <p className="text-loss text-xs w-full">{tradeError}</p>}
+              <button type="submit" disabled={tradeLoading} className="bg-gain hover:bg-gain/80 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0">
+                {tradeLoading ? 'Buying…' : 'Confirm Buy'}
               </button>
-              <button type="button" onClick={() => setActiveForm(null)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
+              <button type="button" onClick={() => setActiveForm(null)} disabled={tradeLoading} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
             </form>
           )}
 
@@ -423,7 +452,7 @@ export default function StockDetail() {
           {activeForm === 'sell' && sharesHeld > 0 && (
             <form
               onSubmit={handleSell}
-              className="bg-surface-card border border-loss/20 rounded-xl p-4 flex items-center gap-3"
+              className="bg-surface-card border border-loss/20 rounded-xl p-4 flex items-center gap-3 flex-wrap"
             >
               <TrendingDown size={15} className="text-loss shrink-0" />
               <p className="text-muted text-sm shrink-0">
@@ -433,7 +462,7 @@ export default function StockDetail() {
               <input
                 type="number" min="0.001" max={sharesHeld} step="any" placeholder="Shares"
                 value={shares} onChange={e => setShares(e.target.value)}
-                autoFocus
+                autoFocus disabled={tradeLoading}
                 className="flex-1 bg-surface-hover text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border focus:border-loss/40 transition-colors"
                 required
               />
@@ -442,14 +471,15 @@ export default function StockDetail() {
                   = <span className="text-primary font-medium">${(parseFloat(shares) * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </p>
               )}
+              {tradeError && <p className="text-loss text-xs w-full">{tradeError}</p>}
               <button
                 type="submit"
-                disabled={parseFloat(shares) > sharesHeld}
+                disabled={tradeLoading || parseFloat(shares) > sharesHeld}
                 className="bg-loss hover:bg-loss/80 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shrink-0"
               >
-                Confirm Sell
+                {tradeLoading ? 'Selling…' : 'Confirm Sell'}
               </button>
-              <button type="button" onClick={() => setActiveForm(null)} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
+              <button type="button" onClick={() => setActiveForm(null)} disabled={tradeLoading} className="text-muted hover:text-primary text-sm shrink-0">✕</button>
             </form>
           )}
 
@@ -660,6 +690,9 @@ export default function StockDetail() {
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* ── Financial statements ──────────────────────── */}
+      {symbol && <FinancialsPanel ticker={symbol} />}
 
       {/* ── Class related stocks ──────────────────────── */}
       <ClassRelatedStocks symbol={symbol} />

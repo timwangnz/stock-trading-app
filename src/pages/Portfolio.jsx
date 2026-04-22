@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import { Trash2, PlusCircle, TrendingUp, DollarSign, Percent, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown, Pencil, BadgeDollarSign } from 'lucide-react'
+import { Trash2, PlusCircle, TrendingUp, DollarSign, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown, Pencil, BadgeDollarSign } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
@@ -12,7 +12,7 @@ import { useApp, ACTIONS } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { STOCKS } from '../data/mockData'
 import { useLivePrices } from '../hooks/useLivePrices'
-import { buyAtMarket, sellAtMarket, sellManual, addCash, upsertHolding, fetchPortfolio, fetchCash, getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
+import { buyAtMarket, sellAtMarket, addCash, upsertHolding, fetchPortfolio, fetchCash, getPortfolioSnapshots, triggerSnapshot, fetchTransactions } from '../services/apiService'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
 import StockTreemap from '../components/StockTreemap'
 import StockSearch from '../components/StockSearch'
@@ -164,6 +164,7 @@ function PortfolioChart({ currentValue }) {
   )
 }
 
+
 function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
   const [symbol,    setSymbol]    = useState('')
   const [shares,    setShares]    = useState('')
@@ -267,26 +268,22 @@ function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
  * @param {object} holding  - the enriched holding object (has .shares, .price, .symbol)
  * @param {function} onClose
  */
-function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, prefillShares }) {
-  const livePrice = holding.price > 0 ? holding.price.toFixed(2) : ''
+function TradePanel({ mode, holding, onClose, onBuy, onSell, prefillShares }) {
   const [qty,        setQty]        = useState(prefillShares != null ? String(prefillShares) : '')
-  const [price,      setPrice]      = useState(livePrice)
   const [error,      setError]      = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const isBuy       = mode === 'buy'
-  const shares      = parseFloat(qty)
-  const totalShares = parseFloat(holding.shares)   // pg returns NUMERIC as string — always parse
-  // For buys: teacher/admin use their typed price, students get locked live price
-  // For sells: teacher/admin use their typed price, students use live price
-  const effectivePrice = canManualPrice ? parseFloat(price) : holding.price
+  const isBuy        = mode === 'buy'
+  const shares       = parseFloat(qty)
+  const totalShares  = parseFloat(holding.shares)   // pg returns NUMERIC as string — always parse
+  const marketPrice  = holding.price
 
   // Live preview calculations
-  const totalCash  = !isNaN(shares) && !isNaN(effectivePrice) ? shares * effectivePrice : null
+  const totalCash  = !isNaN(shares) && marketPrice > 0 ? shares * marketPrice : null
   const sellPct    = !isNaN(shares) && totalShares > 0
     ? Math.min(100, (shares / totalShares) * 100).toFixed(1) : null
-  const newAvgCost = isBuy && !isNaN(shares) && !isNaN(effectivePrice) && shares > 0
-    ? ((holding.avgCost * totalShares) + (effectivePrice * shares)) / (totalShares + shares)
+  const newAvgCost = isBuy && !isNaN(shares) && marketPrice > 0 && shares > 0
+    ? ((holding.avgCost * totalShares) + (marketPrice * shares)) / (totalShares + shares)
     : null
 
   const handleSubmit = async (e) => {
@@ -296,16 +293,15 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
     setSubmitting(true)
     try {
       if (isBuy) {
-        if (isNaN(effectivePrice) || effectivePrice <= 0) { setError('Enter a valid price.'); setSubmitting(false); return }
-        await onBuy({ symbol: holding.symbol, shares, avgCost: effectivePrice })
+        if (marketPrice <= 0) { setError('Live price unavailable — try again shortly.'); setSubmitting(false); return }
+        await onBuy({ symbol: holding.symbol, shares })
       } else {
         if (shares > totalShares) {
           setError(`You only hold ${totalShares} shares — can't sell more than that.`)
           setSubmitting(false)
           return
         }
-        // Pass price for teacher/admin so the server can credit the correct amount
-        await onSell({ symbol: holding.symbol, shares, price: canManualPrice ? effectivePrice : undefined })
+        await onSell({ symbol: holding.symbol, shares })
       }
       // Parent's onBuy/onSell handler is responsible for closing the panel (setActivePanel(null))
     } catch (err) {
@@ -316,7 +312,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
 
   return (
     <tr className="bg-surface-hover/50 border-t border-border">
-      <td colSpan={8} className="px-5 py-4">
+      <td colSpan={9} className="px-5 py-4">
         <form onSubmit={handleSubmit}>
           <div className="flex items-start gap-4 flex-wrap">
 
@@ -341,21 +337,13 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
               />
             </div>
 
-            {/* Price input — editable for teacher/admin on both buy and sell; locked for students */}
+            {/* Price — always locked to live market price */}
             <div className="flex flex-col gap-1">
               <label className="text-muted text-xs">Price per share ($)</label>
-              {canManualPrice ? (
-                <input
-                  type="number" min="0" step="any"
-                  value={price} onChange={e => setPrice(e.target.value)}
-                  className="bg-surface-card text-primary text-sm rounded-lg px-3 py-2 outline-none border border-border w-36 focus:border-accent-blue/50 transition-colors"
-                />
-              ) : (
-                <div className="flex items-center gap-1.5 px-3 py-2 bg-surface-card border border-border rounded-lg w-36 text-sm text-primary">
-                  <Lock size={11} className="text-muted shrink-0" />
-                  ${holding.price.toFixed(2)}
-                </div>
-              )}
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-surface-card border border-border rounded-lg w-36 text-sm text-primary">
+                <Lock size={11} className="text-muted shrink-0" />
+                {marketPrice > 0 ? `$${marketPrice.toFixed(2)}` : <span className="text-muted text-xs">Unavailable</span>}
+              </div>
             </div>
 
             {/* Live preview */}
@@ -375,7 +363,7 @@ function TradePanel({ mode, holding, onClose, onBuy, onSell, canManualPrice, pre
                 {!isBuy && sellPct !== null && (
                   <p>
                     Selling <span className="text-primary font-medium">{sellPct}%</span> of position
-                    {shares >= holding.shares && <span className="text-loss ml-1">(full exit)</span>}
+                    {shares >= totalShares && <span className="text-loss ml-1">(full exit)</span>}
                   </p>
                 )}
               </div>
@@ -425,7 +413,7 @@ function EditPanel({ holding, onClose, onSave }) {
 
   return (
     <tr className="bg-surface-hover/50 border-t border-border">
-      <td colSpan={8} className="px-5 py-4">
+      <td colSpan={9} className="px-5 py-4">
         <form onSubmit={handleSubmit}>
           <div className="flex items-start gap-4 flex-wrap">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-accent-blue shrink-0 mt-2">
@@ -468,8 +456,9 @@ function EditPanel({ holding, onClose, onSave }) {
 
 export default function Portfolio() {
   const { state, dispatch } = useApp()
-  const { canTrade, isReadonly, isAdmin, isTeacher } = useAuth()
+  const { canTrade, isReadonly, isAdmin, isTeacher, isStudent } = useAuth()
   const canManualPrice = isAdmin || isTeacher   // only admin/teacher can set arbitrary prices
+  const canManage = canTrade && !isStudent       // all non-students: edit/delete/add cash
   const [showAddForm, setShowAddForm] = useState(false)
   const [tradeError,  setTradeError]  = useState(null)
   const [cash,        setCash]        = useState(null)
@@ -556,6 +545,14 @@ export default function Portfolio() {
   const totalGain     = holdingsValue - totalCost
   const totalGainPct  = totalCost > 0 ? (totalGain / totalCost) * 100 : 0
 
+  // Today's P/L — derived from each holding's daily price % change
+  const todayPL = holdings.reduce((s, h) => {
+    const prevValue = h.changePct !== 0 ? h.value / (1 + h.changePct / 100) : h.value
+    return s + (h.value - prevValue)
+  }, 0)
+  const prevHoldingsValue = holdingsValue - todayPL
+  const todayPLPct = prevHoldingsValue > 0 ? (todayPL / prevHoldingsValue) * 100 : 0
+
   if (loading) return <LoadingSpinner message="Fetching live prices…" />
   if (error)   return <ErrorMessage error={error} />
 
@@ -563,7 +560,7 @@ export default function Portfolio() {
     <div className="p-6 space-y-6">
 
       {/* ── Summary cards ────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
@@ -586,7 +583,7 @@ export default function Portfolio() {
               <DollarSign size={14} className="text-accent-blue" />
               <p className="text-muted text-xs">Cash Available</p>
             </div>
-            {canManualPrice && (
+            {canManage && (
               <button
                 onClick={() => { setShowAddCash(v => !v); setAddCashAmount(''); setAddCashError('') }}
                 title="Add or deduct cash"
@@ -645,20 +642,26 @@ export default function Portfolio() {
         <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-1">
             <TrendingUp size={14} className="text-muted" />
-            <p className="text-muted text-xs">Unrealized P&L</p>
+            <p className="text-muted text-xs">Total Return</p>
           </div>
           <p className={clsx('font-bold text-2xl', totalGain >= 0 ? 'text-gain' : 'text-loss')}>
             {totalGain >= 0 ? '+' : ''}${totalGain.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <p className={clsx('text-xs mt-0.5', totalGainPct >= 0 ? 'text-gain' : 'text-loss')}>
+            {totalGainPct >= 0 ? '+' : ''}{totalGainPct.toFixed(2)}% unrealized
           </p>
         </div>
 
         <div className="bg-surface-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-1">
-            <Percent size={14} className="text-muted" />
-            <p className="text-muted text-xs">Return %</p>
+            <TrendingUp size={14} className="text-muted" />
+            <p className="text-muted text-xs">Today's P&L</p>
           </div>
-          <p className={clsx('font-bold text-2xl', totalGainPct >= 0 ? 'text-gain' : 'text-loss')}>
-            {totalGainPct >= 0 ? '+' : ''}{totalGainPct.toFixed(2)}%
+          <p className={clsx('font-bold text-2xl', todayPL >= 0 ? 'text-gain' : 'text-loss')}>
+            {todayPL >= 0 ? '+' : ''}${todayPL.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <p className={clsx('text-xs mt-0.5', todayPLPct >= 0 ? 'text-gain' : 'text-loss')}>
+            {todayPLPct >= 0 ? '+' : ''}{todayPLPct.toFixed(2)}% today
           </p>
         </div>
       </div>
@@ -708,7 +711,7 @@ export default function Portfolio() {
         {showAddForm && (
           <div className="p-4 border-b border-border">
             <AddHoldingForm
-              canManualPrice={canManualPrice}
+              canManualPrice={canManage}
               onAdd={async h => {
                 setTradeError(null)
                 try {
@@ -740,6 +743,7 @@ export default function Portfolio() {
                 <th className="text-right px-5 py-3 font-medium">Shares</th>
                 <th className="text-right px-5 py-3 font-medium">Avg Cost</th>
                 <th className="text-right px-5 py-3 font-medium">Current (Live)</th>
+                <th className="text-right px-5 py-3 font-medium">Today</th>
                 <th className="text-right px-5 py-3 font-medium">Value</th>
                 <th className="text-right px-5 py-3 font-medium">Gain / Loss</th>
                 <th className="px-5 py-3"></th>
@@ -799,6 +803,21 @@ export default function Portfolio() {
                       <td className="text-right px-5 py-3 text-secondary">{h.shares}</td>
                       <td className="text-right px-5 py-3 text-secondary">${h.avgCost.toFixed(2)}</td>
                       <td className="text-right px-5 py-3 text-primary">${h.price.toFixed(2)}</td>
+                      <td className="text-right px-5 py-3">
+                        {(() => {
+                          const dayPL = h.changePct !== 0 ? h.value - h.value / (1 + h.changePct / 100) : 0
+                          return (
+                            <>
+                              <p className={clsx('font-medium text-sm', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
+                                {h.changePct >= 0 ? '+' : ''}${dayPL.toFixed(2)}
+                              </p>
+                              <p className={clsx('text-xs', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
+                                {h.changePct >= 0 ? '+' : ''}{h.changePct.toFixed(2)}%
+                              </p>
+                            </>
+                          )
+                        })()}
+                      </td>
                       <td className="text-right px-5 py-3 text-primary font-medium">
                         ${h.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
@@ -839,8 +858,8 @@ export default function Portfolio() {
                             >
                               Sell
                             </button>
-                            {/* Edit + Trash only for teacher/admin */}
-                            {canManualPrice && (
+                            {/* Edit + Trash for all non-students */}
+                            {canManage && (
                               <>
                                 <button
                                   onClick={toggleEdit}
@@ -903,6 +922,8 @@ export default function Portfolio() {
                           </td>
                           {/* current price — same as parent row */}
                           <td className="text-right px-5 py-2 text-muted text-xs">—</td>
+                          {/* today — inherited from parent */}
+                          <td className="text-right px-5 py-2 text-muted text-xs">—</td>
                           <td className="text-right px-5 py-2 text-xs text-secondary font-mono">
                             ${lotValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
@@ -963,29 +984,17 @@ export default function Portfolio() {
                         key={`panel-${h.symbol}-${activePanel?.lotIdx ?? 'main'}`}
                         mode={panelMode}
                         holding={h}
-                        canManualPrice={canManualPrice}
                         prefillShares={activePanel?.prefillShares}
                         onClose={() => setActivePanel(null)}
                         onBuy={async (payload) => {
-                          // Errors propagate to TradePanel which shows them inline
-                          if (canManualPrice) {
-                            // Teacher/admin manual buy: update portfolio at specified price,
-                            // no cash deducted (admin override)
-                            dispatch({ type: ACTIONS.ADD_TO_PORTFOLIO, payload })
-                          } else {
-                            await buyAtMarket(payload.symbol, payload.shares)
-                            await reloadPortfolio()
-                          }
+                          // Always trade at live market price for all roles
+                          await buyAtMarket(payload.symbol, payload.shares)
+                          await reloadPortfolio()
                           setActivePanel(null)
                         }}
                         onSell={async (payload) => {
-                          // Errors propagate to TradePanel which shows them inline
-                          if (canManualPrice && payload.price != null && !isNaN(payload.price)) {
-                            // Teacher/admin sell at specified price — server credits cash
-                            await sellManual(payload.symbol, payload.shares, payload.price)
-                          } else {
-                            await sellAtMarket(payload.symbol, payload.shares)
-                          }
+                          // Always trade at live market price for all roles
+                          await sellAtMarket(payload.symbol, payload.shares)
                           await reloadPortfolio()
                           // Collapse lot rows so updated state is clean
                           setExpandedSymbols(prev => {
@@ -1009,6 +1018,7 @@ export default function Portfolio() {
                     <p className="text-accent-blue font-mono font-semibold">CASH</p>
                     <p className="text-muted text-xs">Buying power</p>
                   </td>
+                  <td className="text-right px-5 py-3 text-muted text-xs">—</td>
                   <td className="text-right px-5 py-3 text-muted text-xs">—</td>
                   <td className="text-right px-5 py-3 text-muted text-xs">—</td>
                   <td className="text-right px-5 py-3 text-muted text-xs">—</td>

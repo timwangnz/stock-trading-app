@@ -39,11 +39,12 @@ import { join, dirname } from 'path'
 import pool           from './db.js'
 import { verifyGoogleToken, exchangeGoogleCode, signJwt, authMiddleware } from './auth.js'
 import { OAuth2Client } from 'google-auth-library'
-import { requireRole, requirePermission, PERMISSIONS } from './rbac.js'
+import { requireRole, requirePermission, requireNonStudent, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
 import { log as audit } from './audit.js'
-import { sendPasswordResetEmail } from './email.js'
+import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
 import marketRouter                    from './market.js'
+import financialsRouter                from './financials.js'
 import { classRouter, leaderboardRouter, groupRouter } from './classes.js'
 import { ideasRouter }                    from './ideas.js'
 
@@ -102,6 +103,47 @@ app.use(cors())
 
 // ── Body size limit ───────────────────────────────────────────────
 app.use(express.json({ limit: '16kb' }))
+
+// ── In-memory server log buffer ──────────────────────────────────
+// Keeps the last 500 entries (requests + errors) in a circular buffer.
+// Resets on server restart — for persistent logs use a DB table.
+const SERVER_LOGS   = []
+const MAX_LOG_SIZE  = 500
+let   _logIdCounter = 0
+
+function addServerLog(entry) {
+  SERVER_LOGS.unshift({ id: ++_logIdCounter, ts: new Date().toISOString(), ...entry })
+  if (SERVER_LOGS.length > MAX_LOG_SIZE) SERVER_LOGS.length = MAX_LOG_SIZE
+}
+
+// Capture request / response pairs
+app.use((req, res, next) => {
+  const start = Date.now()
+  // Skip static asset noise in the log
+  const skip = ['.js', '.css', '.png', '.ico', '.svg', '.woff'].some(ext =>
+    req.path.endsWith(ext)
+  )
+  res.on('finish', () => {
+    if (skip) return
+    addServerLog({
+      type:   'request',
+      method: req.method,
+      path:   req.path,
+      status: res.statusCode,
+      ms:     Date.now() - start,
+      ip:     req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? null,
+    })
+  })
+  next()
+})
+
+// Patch console.error to also capture server-side errors
+const _origConsoleError = console.error.bind(console)
+console.error = (...args) => {
+  _origConsoleError(...args)
+  const message = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+  addServerLog({ type: 'error', message: message.slice(0, 500) })
+}
 
 // ── Rate limiting ─────────────────────────────────────────────────
 // Skipped entirely in development — all local requests share 127.0.0.1
@@ -502,6 +544,9 @@ app.post('/api/auth/logout', authMiddleware, (req, res) => {
 // ── Market data (Polygon proxy — JWT required to prevent quota abuse) ────────
 app.use('/api/market',       authMiddleware, marketRouter)
 
+// ── Financial statements (Polygon proxy — JWT required) ──────────────────────
+app.use('/api/financials',   authMiddleware, financialsRouter)
+
 // ── Classroom, leaderboard, trading ideas ────────────────────────────────────
 app.use('/api/classes',      authMiddleware, classRouter)
 app.use('/api/groups',       authMiddleware, groupRouter)
@@ -718,9 +763,9 @@ app.get('/api/portfolio/cash', async (req, res) => {
   }
 })
 
-// POST /api/portfolio/cash/add — teacher/admin: manually adjust cash balance
+// POST /api/portfolio/cash/add — non-student: manually adjust cash balance
 // amount can be positive (add) or negative (deduct), floor enforced at $0
-app.post('/api/portfolio/cash/add', requireRole('teacher'), async (req, res) => {
+app.post('/api/portfolio/cash/add', requireNonStudent, async (req, res) => {
   const amount = parseFloat(req.body.amount)
   if (isNaN(amount) || amount === 0) {
     return res.status(400).json({ error: 'amount must be a non-zero number' })
@@ -739,9 +784,9 @@ app.post('/api/portfolio/cash/add', requireRole('teacher'), async (req, res) => 
   }
 })
 
-// ── Portfolio (manual write — teacher/admin only) ────────────────
+// ── Portfolio (manual write — all non-students) ──────────────────
 app.put('/api/portfolio/:symbol',
-  requireRole('teacher'),
+  requireNonStudent,
   async (req, res) => {
     const { symbol }          = req.params
     const { shares, avgCost } = req.body
@@ -935,6 +980,21 @@ app.put('/api/settings/llm', authMiddleware, async (req, res) => {
 
 // ── Admin endpoints ─────────────────────────────────────────────
 const adminOnly = requireRole('admin')
+
+// GET /api/admin/server-logs — live in-memory request + error log
+app.get('/api/admin/server-logs', adminOnly, (req, res) => {
+  const { type, status, limit = 200 } = req.query
+  let entries = [...SERVER_LOGS]
+  if (type)   entries = entries.filter(e => e.type   === type)
+  if (status) entries = entries.filter(e => {
+    if (status === '2xx') return e.status >= 200 && e.status < 300
+    if (status === '3xx') return e.status >= 300 && e.status < 400
+    if (status === '4xx') return e.status >= 400 && e.status < 500
+    if (status === '5xx') return e.status >= 500
+    return true
+  })
+  res.json(entries.slice(0, parseInt(limit)))
+})
 
 // List all users
 app.get('/api/admin/users', adminOnly, async (_req, res) => {
@@ -1506,6 +1566,170 @@ if (isProd) {
     res.sendFile(join(distDir, 'index.html'))
   })
 }
+
+// ── Daily portfolio snapshot scheduler ──────────────────────────
+//
+// Runs Mon–Fri at 4:15 PM US/Eastern (just after market close).
+// On partial failure it retries only the failed users, up to 3 attempts
+// total, waiting 5 min then 10 min between tries.
+//
+// No external dependencies — uses only setTimeout + Intl.
+
+/**
+ * Snapshot a specific list of users (by id).  Returns the ids that failed.
+ */
+async function snapshotUsers(userIds, attempt, maxAttempts) {
+  console.log(`[snapshot-scheduler] Attempt ${attempt}/${maxAttempts} — snapshotting ${userIds.length} user(s)`)
+  const results = await Promise.allSettled(userIds.map(id => takeSnapshot(id)))
+  const failedIds = []
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.error(`[snapshot-scheduler] User ${userIds[i]} failed: ${r.reason?.message ?? r.reason}`)
+      failedIds.push(userIds[i])
+    }
+  })
+  const ok = userIds.length - failedIds.length
+  console.log(`[snapshot-scheduler] Attempt ${attempt} — ${ok} ok, ${failedIds.length} failed`)
+  return failedIds
+}
+
+/**
+ * Entry point called by the scheduler.  Fetches all active users on the
+ * first run; subsequent retry calls pass only the ids that failed.
+ */
+async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null } = {}) {
+  try {
+    let ids = userIds
+    if (!ids) {
+      const { rows } = await pool.query('SELECT id FROM users WHERE is_disabled = false')
+      ids = rows.map(r => r.id)
+    }
+    if (!ids.length) {
+      console.log('[snapshot-scheduler] No active users — skipping')
+      return
+    }
+
+    const failedIds = await snapshotUsers(ids, attempt, maxAttempts)
+
+    if (failedIds.length === 0) return  // all good
+
+    if (attempt < maxAttempts) {
+      const delayMin = attempt * 5   // 5 min, then 10 min
+      console.log(`[snapshot-scheduler] Retrying ${failedIds.length} user(s) in ${delayMin} min (attempt ${attempt + 1}/${maxAttempts})`)
+      setTimeout(
+        () => runDailySnapshot({ attempt: attempt + 1, maxAttempts, userIds: failedIds }),
+        delayMin * 60 * 1000
+      )
+    } else {
+      const date = new Date().toISOString().split('T')[0]
+      console.error(
+        `[snapshot-scheduler] All ${maxAttempts} attempts exhausted. ` +
+        `${failedIds.length} user(s) not snapshotted today: ${failedIds.join(', ')}`
+      )
+      sendSnapshotFailureEmail({
+        to: SNAPSHOT_ALERT_EMAIL,
+        date,
+        failedUserIds: failedIds,
+        totalUsers: ids.length,
+      }).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
+    }
+  } catch (err) {
+    // Catastrophic failure (e.g. DB down) — retry the whole run
+    console.error(`[snapshot-scheduler] Fatal error on attempt ${attempt}: ${err.message}`)
+    if (attempt < maxAttempts) {
+      const delayMin = attempt * 5
+      console.log(`[snapshot-scheduler] Retrying full run in ${delayMin} min`)
+      setTimeout(() => runDailySnapshot({ attempt: attempt + 1, maxAttempts }), delayMin * 60 * 1000)
+    } else {
+      const date = new Date().toISOString().split('T')[0]
+      console.error('[snapshot-scheduler] All retry attempts exhausted — giving up for today')
+      sendSnapshotFailureEmail({
+        to: SNAPSHOT_ALERT_EMAIL,
+        date,
+        failedUserIds: userIds ?? ['unknown — catastrophic failure'],
+        totalUsers: userIds?.length ?? 0,
+      }).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
+    }
+  }
+}
+
+/**
+ * Returns the milliseconds until the next weekday occurrence of HH:MM in the
+ * given IANA timezone (e.g. 'America/New_York').
+ */
+function msUntilNext(hour, minute, tz) {
+  const now = new Date()
+
+  // Build a Date for "today at HH:MM" in the target timezone by formatting
+  // a UTC candidate and checking what local time it corresponds to.
+  const candidate = new Date(now)
+  candidate.setUTCHours(0, 0, 0, 0)
+
+  // Walk forward day-by-day until we find a weekday slot in the future
+  for (let d = 0; d < 8; d++) {
+    const probe = new Date(candidate)
+    probe.setUTCDate(candidate.getUTCDate() + d)
+
+    // What day-of-week is this in the target TZ?
+    const dow = parseInt(
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' })
+        .format(probe)
+        .slice(0, 2)   // unused — use numeric below
+    )
+    const dowName = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(probe)
+    if (dowName === 'Saturday' || dowName === 'Sunday') continue
+
+    // Build the exact fire time: find the UTC instant that equals HH:MM in tz.
+    // Strategy: set probe to midnight UTC of that day, then binary-search / offset.
+    // Simpler: format "what UTC offset applies at noon that day" via DateTimeFormat.
+    const noonUTC = new Date(probe)
+    noonUTC.setUTCHours(12, 0, 0, 0)
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric', minute: 'numeric', hour12: false,
+      year: 'numeric', month: 'numeric', day: 'numeric'
+    }).formatToParts(noonUTC)
+    const get = type => parseInt(parts.find(p => p.type === type)?.value ?? 0)
+    // UTC offset at that moment (in minutes)
+    const localNoon = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'))
+    const offsetMs = noonUTC.getTime() - localNoon   // positive = behind UTC (e.g. ET = +4h or +5h)
+
+    // Fire time in UTC
+    const fireUTC = Date.UTC(
+      parseInt(new Intl.DateTimeFormat('en-US', { timeZone: tz, year:  'numeric' }).format(probe)),
+      parseInt(new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'numeric' }).format(probe)) - 1,
+      parseInt(new Intl.DateTimeFormat('en-US', { timeZone: tz, day:   'numeric' }).format(probe)),
+      hour, minute, 0, 0
+    ) + offsetMs
+
+    if (fireUTC > now.getTime()) {
+      return fireUTC - now.getTime()
+    }
+  }
+  // Fallback (shouldn't happen): 24 h
+  return 24 * 60 * 60 * 1000
+}
+
+/**
+ * Schedules runDailySnapshot() on the next weekday at snapshotHour:snapshotMinute ET,
+ * then reschedules itself for the following day.
+ */
+const SNAPSHOT_ALERT_EMAIL = process.env.SNAPSHOT_ALERT_EMAIL || 'anpwang@gmail.com'
+const SNAPSHOT_TZ          = 'America/New_York'
+const SNAPSHOT_HOUR   = 16   // 4 PM
+const SNAPSHOT_MINUTE = 15   // :15
+
+function scheduleNextSnapshot() {
+  const delay = msUntilNext(SNAPSHOT_HOUR, SNAPSHOT_MINUTE, SNAPSHOT_TZ)
+  const fireAt = new Date(Date.now() + delay).toLocaleString('en-US', { timeZone: SNAPSHOT_TZ })
+  console.log(`[snapshot-scheduler] Next snapshot scheduled for ${fireAt} ET (in ${Math.round(delay / 60000)} min)`)
+  setTimeout(() => {
+    runDailySnapshot()
+    scheduleNextSnapshot()   // queue tomorrow's run
+  }, delay)
+}
+
+scheduleNextSnapshot()
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {

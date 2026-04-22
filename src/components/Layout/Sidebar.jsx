@@ -5,41 +5,58 @@
  * Teachers see a mode toggle: Teaching ↔ Trading.
  */
 
-import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight } from 'lucide-react'
+import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight, BookOpen } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
 import clsx from 'clsx'
 
-// Nav items shown in Student / Trading mode (all roles)
+// Nav for regular traders (user / premium) — no classroom-specific items
+const TRADER_NAV = [
+  { label: 'Dashboard',      page: 'dashboard',     icon: LayoutDashboard },
+  { label: 'Portfolio',      page: 'portfolio',     icon: Briefcase },
+  { label: 'History',        page: 'history',       icon: BarChart2 },
+  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
+  { label: 'Activity',       page: 'activity',      icon: Activity },
+  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
+]
+
+// Nav for students in a class — includes classroom-specific items
 const STUDENT_NAV = [
-  { label: 'Dashboard',   page: 'dashboard',   icon: LayoutDashboard },
-  { label: 'Portfolio',   page: 'portfolio',   icon: Briefcase },
-  { label: 'History',     page: 'history',     icon: BarChart2 },
-  { label: 'Leaderboard', page: 'leaderboard', icon: Trophy },
-  { label: 'Ideas',       page: 'ideas',       icon: Lightbulb },
-  { label: 'Activity',    page: 'activity',    icon: Activity },
-  { label: 'My Groups',   page: 'groups',      icon: Users },
+  { label: 'Dashboard',      page: 'dashboard',     icon: LayoutDashboard },
+  { label: 'Portfolio',      page: 'portfolio',     icon: Briefcase },
+  { label: 'History',        page: 'history',       icon: BarChart2 },
+  { label: 'Leaderboard',    page: 'leaderboard',   icon: Trophy },
+  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
+  { label: 'Activity',       page: 'activity',      icon: Activity },
+  { label: 'My Groups',      page: 'groups',        icon: Users },
+  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
 ]
 
 // Nav items shown in Teacher mode (teacher/admin only)
 const TEACHER_NAV = [
-  { label: 'My Classes',  page: 'classroom',   icon: GraduationCap },
-  { label: 'Leaderboard', page: 'leaderboard', icon: Trophy },
-  { label: 'Ideas',       page: 'ideas',       icon: Lightbulb },
-  { label: 'Activity',    page: 'activity',    icon: Activity },
+  { label: 'My Classes',     page: 'classroom',     icon: GraduationCap },
+  { label: 'Leaderboard',    page: 'leaderboard',   icon: Trophy },
+  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
+  { label: 'Activity',       page: 'activity',      icon: Activity },
+  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
 ]
 
 export default function Sidebar() {
   const { state, dispatch }                       = useApp()
-  const { isAdmin, isTeacher, role, viewMode, toggleViewMode } = useAuth()
+  const { isAdmin, isTeacher, isStudent, role, viewMode, toggleViewMode } = useAuth()
 
   const navigate = (page) => {
     dispatch({ type: ACTIONS.NAVIGATE, payload: page })
   }
 
   const inTeacherMode = isTeacher && viewMode === 'teacher'
-  const navItems      = inTeacherMode ? TEACHER_NAV : STUDENT_NAV
+
+  // Pick the right nav based on role:
+  //  - teacher in teaching mode → TEACHER_NAV
+  //  - student → STUDENT_NAV (has leaderboard + groups)
+  //  - everyone else (user, premium, teacher in trading mode) → TRADER_NAV
+  const navItems = inTeacherMode ? TEACHER_NAV : isStudent ? STUDENT_NAV : TRADER_NAV
 
   return (
     <aside className="w-56 h-full bg-surface-card border-r border-border flex flex-col overflow-y-auto">
@@ -52,7 +69,7 @@ export default function Sidebar() {
           </span>
         </div>
         <p className="text-muted text-xs mt-0.5">
-          {inTeacherMode ? 'Teacher Dashboard' : 'Vibe Trading Platform'}
+          {inTeacherMode ? 'Teacher Dashboard' : 'Portfolio & Trading'}
         </p>
       </div>
 
@@ -102,20 +119,20 @@ export default function Sidebar() {
       {/* Portfolio sparkline — only in student/trading mode */}
       {!inTeacherMode && <PortfolioSparkline />}
 
-      {/* Become a Teacher — only for regular users (not teacher/admin/readonly) */}
-      {role === 'user' && (
+      {/* Run a Classroom — subtle CTA for regular users; classroom is a secondary feature */}
+      {(role === 'user' || role === 'premium') && (
         <div className="px-3 pb-2">
           <button
             onClick={() => navigate('classroom')}
             className={clsx(
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+              'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-colors',
               state.currentPage === 'classroom'
                 ? 'bg-purple-400/15 text-purple-400 font-medium'
-                : 'text-purple-400/50 hover:bg-purple-400/10 hover:text-purple-400'
+                : 'text-muted/50 hover:bg-surface-hover hover:text-muted'
             )}
           >
-            <GraduationCap size={17} />
-            Become a Teacher
+            <GraduationCap size={14} />
+            Run a Classroom
           </button>
         </div>
       )}
@@ -164,9 +181,10 @@ export default function Sidebar() {
               'text-xs px-2 py-0.5 rounded-full border font-medium inline-block',
               role === 'admin'    && 'text-orange-400  border-orange-400/20  bg-orange-400/5',
               role === 'teacher'  && 'text-purple-400  border-purple-400/20  bg-purple-400/5',
-              role === 'premium'  && 'text-yellow-400 border-yellow-400/20 bg-yellow-400/5',
+              role === 'premium'  && 'text-yellow-400  border-yellow-400/20  bg-yellow-400/5',
+              role === 'student'  && 'text-gain        border-gain/20        bg-gain/5',
               role === 'user'     && 'text-accent-blue border-accent-blue/20 bg-accent-blue/5',
-              role === 'readonly' && 'text-muted   border-border',
+              role === 'readonly' && 'text-muted        border-border',
             )}>
               {role}
             </span>
@@ -175,13 +193,15 @@ export default function Sidebar() {
               role === 'admin'    && 'text-orange-400/50',
               role === 'teacher'  && 'text-purple-400/50',
               role === 'premium'  && 'text-yellow-400/50',
+              role === 'student'  && 'text-gain/50',
               role === 'user'     && 'text-accent-blue/50',
               role === 'readonly' && 'text-muted',
             )}>
               {role === 'admin'    && 'Full access + admin panel'}
               {role === 'teacher'  && (inTeacherMode ? 'Teaching mode' : 'Trading mode')}
               {role === 'premium'  && 'Full portfolio & trading access'}
-              {role === 'user'     && 'Can edit portfolio & watchlist'}
+              {role === 'student'  && 'Enrolled in a class'}
+              {role === 'user'     && 'Full trading & portfolio access'}
               {role === 'readonly' && 'View only — no edits'}
             </p>
           </div>

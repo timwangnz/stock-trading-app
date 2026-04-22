@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { ArrowUpRight, ArrowDownRight, Activity, RefreshCw, Briefcase, ChevronRight, SlidersHorizontal } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import StockTreemap from '../components/StockTreemap'
 import { getSnapshots } from '../services/polygonApi'
 import { useApp, ACTIONS } from '../context/AppContext'
@@ -38,15 +38,22 @@ function StatBadge({ label, value, trend }) {
   )
 }
 
-function PortfolioBarTooltip({ active, payload }) {
+const PIE_COLORS = [
+  '#6366f1', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899',
+  '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4', '#84cc16',
+]
+
+function PortfolioPieTooltip({ active, payload }) {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
+  if (!d) return null
   const isUp = d.returnPct >= 0
   return (
     <div className="bg-surface-card border border-border rounded-xl px-3 py-2 shadow-lg text-xs space-y-0.5 pointer-events-none">
       <p className="text-primary font-semibold font-mono">{d.symbol}</p>
       <p className="text-muted">
-        Value: ${Number(d.value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        ${Number(d.value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {' · '}{d.allocationPct.toFixed(1)}%
       </p>
       <p className={isUp ? 'text-gain font-semibold' : 'text-loss font-semibold'}>
         Return: {isUp ? '+' : ''}{d.returnPct.toFixed(2)}%
@@ -88,18 +95,18 @@ function PortfolioSummary({ onNavigate }) {
   const totalGainPct = totalCost > 0 ? (totalGain / totalCost) * 100 : 0
   const todayGain    = holdings.reduce((s, h) => s + h.dayGain, 0)
 
-  // Bar chart data: sorted by value descending, coloured by total return
-  const barData = useMemo(() =>
-    [...holdings]
-      .filter(h => h.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .map(h => ({
-        symbol:    h.symbol,
-        value:     h.value,
-        returnPct: h.cost > 0 ? (h.gain / h.cost) * 100 : 0,
-      })),
-    [holdings]
-  )
+  // Pie chart data: sorted by value descending
+  const pieData = useMemo(() => {
+    const filtered = [...holdings].filter(h => h.value > 0).sort((a, b) => b.value - a.value)
+    const total = filtered.reduce((s, h) => s + h.value, 0)
+    return filtered.map((h, i) => ({
+      symbol:        h.symbol,
+      value:         h.value,
+      allocationPct: total > 0 ? (h.value / total) * 100 : 0,
+      returnPct:     h.cost > 0 ? (h.gain / h.cost) * 100 : 0,
+      color:         PIE_COLORS[i % PIE_COLORS.length],
+    }))
+  }, [holdings])
 
   // Heatmap data: size = position value, colour = total return %
   const heatmapData = useMemo(() =>
@@ -170,40 +177,52 @@ function PortfolioSummary({ onNavigate }) {
           {/* ── Divider ───────────────────────────── */}
           <div className="w-px self-stretch bg-surface-hover mx-2 shrink-0" />
 
-          {/* ── Right: holdings bar chart ─────────── */}
-          <div className="flex-1 min-w-0">
-            <p className="text-muted text-xs mb-2">Holdings by value</p>
-            <ResponsiveContainer width="100%" height={Math.max(80, barData.length * 28)}>
-              <BarChart
-                data={barData}
-                layout="vertical"
-                margin={{ top: 0, right: 8, bottom: 0, left: 0 }}
-                onClick={(e) => {
-                  if (e?.activePayload?.[0]?.payload?.symbol) {
-                    dispatch({ type: ACTIONS.VIEW_STOCK, payload: e.activePayload[0].payload.symbol })
-                  }
-                }}
-              >
-                <XAxis type="number" hide />
-                <YAxis
-                  type="category"
-                  dataKey="symbol"
-                  width={40}
-                  tick={{ fill: 'rgb(var(--text-muted))', fontSize: 10, fontFamily: 'ui-monospace, monospace' }}
-                  axisLine={false} tickLine={false}
-                />
-                <Tooltip content={<PortfolioBarTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                <Bar dataKey="value" radius={[0, 3, 3, 0]} cursor="pointer" barSize={16}>
-                  {barData.map((entry) => (
-                    <Cell
-                      key={entry.symbol}
-                      fill={entry.returnPct >= 0 ? 'rgb(var(--gain))' : 'rgb(var(--loss))'}
-                      fillOpacity={0.75}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          {/* ── Right: holdings pie chart ─────────── */}
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            {/* Donut */}
+            <div style={{ width: 130, height: 130, flexShrink: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={36}
+                    outerRadius={58}
+                    paddingAngle={2}
+                    dataKey="value"
+                    isAnimationActive={false}
+                    onClick={(entry) => dispatch({ type: ACTIONS.VIEW_STOCK, payload: entry.symbol })}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {pieData.map((entry) => (
+                      <Cell key={entry.symbol} fill={entry.color} stroke="transparent" />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<PortfolioPieTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Legend */}
+            <div className="flex-1 min-w-0 overflow-y-auto" style={{ maxHeight: 130 }}>
+              <div className="space-y-1">
+                {pieData.map(d => (
+                  <button
+                    key={d.symbol}
+                    onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: d.symbol })}
+                    className="flex items-center gap-1.5 w-full text-left hover:bg-surface-hover rounded px-1.5 py-0.5 transition-colors"
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                    <span className="text-primary font-mono text-xs font-semibold w-10 shrink-0 truncate">{d.symbol}</span>
+                    <span className="text-muted text-xs tabular-nums">{d.allocationPct.toFixed(1)}%</span>
+                    <span className={clsx('ml-auto text-xs tabular-nums shrink-0', d.returnPct >= 0 ? 'text-gain' : 'text-loss')}>
+                      {d.returnPct >= 0 ? '+' : ''}{d.returnPct.toFixed(1)}%
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
         </div>

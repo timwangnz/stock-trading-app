@@ -9,6 +9,7 @@ import { Router }  from 'express'
 import crypto      from 'crypto'
 import pool        from './db.js'
 import { sendClassInviteEmail } from './email.js'
+import { signJwt } from './auth.js'
 
 export const classRouter      = Router()
 export const leaderboardRouter = Router()
@@ -337,7 +338,27 @@ classRouter.post('/join', async (req, res) => {
       [invite.id]
     )
 
-    res.json({ class_id: invite.class_id, class_name: invite.class_name, school_name: invite.school_name })
+    // Promote to 'student' role — only if not already a higher-privileged user.
+    // This is the ONLY place in the codebase that assigns the student role.
+    const promotableRoles = ['readonly', 'user']
+    let updatedUser = req.user
+    if (promotableRoles.includes(req.user.role)) {
+      const { rows: updated } = await pool.query(
+        `UPDATE users SET role = 'student' WHERE id = $1 RETURNING *`,
+        [req.user.id]
+      )
+      updatedUser = updated[0]
+    }
+
+    // Return a fresh JWT so the client's role reflects 'student' immediately
+    const newToken = signJwt(updatedUser)
+    res.json({
+      token:       newToken,
+      user:        { id: updatedUser.id, name: updatedUser.name, email: updatedUser.email, role: updatedUser.role, avatar_url: updatedUser.avatar_url },
+      class_id:    invite.class_id,
+      class_name:  invite.class_name,
+      school_name: invite.school_name,
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

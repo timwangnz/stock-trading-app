@@ -13,7 +13,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthToken } from '../services/apiService'
+import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthToken, joinClass } from '../services/apiService'
 
 const AuthContext = createContext(null)
 
@@ -22,7 +22,9 @@ const USER_KEY      = 'tradebuddy_user'
 const VIEW_MODE_KEY = 'tradebuddy_view_mode'
 
 // ── Role helpers (mirrors server/rbac.js) ─────────────────────
-const ROLE_HIERARCHY = ['readonly', 'user', 'premium', 'teacher', 'admin']
+// 'student' is between 'user' and 'premium'.
+// It is ONLY assigned server-side when a user joins a class — never at signup.
+const ROLE_HIERARCHY = ['readonly', 'user', 'student', 'premium', 'teacher', 'admin']
 
 function hasRole(userRole, requiredRole) {
   return ROLE_HIERARCHY.indexOf(userRole) >= ROLE_HIERARCHY.indexOf(requiredRole)
@@ -87,6 +89,20 @@ export function AuthProvider({ children }) {
   }, [saveSession])
 
   /**
+   * Join a class via invite token.
+   * The server sets role = 'student' (if not already privileged) and returns
+   * a fresh JWT — this is the ONLY way the 'student' role is assigned.
+   */
+  const joinClassWithToken = useCallback(async (inviteToken) => {
+    const result = await joinClass(inviteToken)
+    // Server returns { token, user, class_id, class_name, school_name }
+    if (result.token && result.user) {
+      saveSession(result.token, result.user)
+    }
+    return result
+  }, [saveSession])
+
+  /**
    * Toggle between 'teacher' and 'student' view mode (teacher/admin only).
    * Persisted in localStorage so it survives page refresh.
    */
@@ -121,6 +137,7 @@ export function AuthProvider({ children }) {
   const canTrade   = !!user && hasRole(role, 'user')      // buy/sell/watchlist changes
   const isAdmin    = !!user && hasRole(role, 'admin')     // admin panel access
   const isTeacher  = role === 'teacher' || isAdmin        // teacher + admin can manage classes
+  const isStudent  = role === 'student'                   // only set via joinClassWithToken
   const isReadonly = !!user && !hasRole(role, 'user')     // view-only
 
   // Effective view mode: only meaningful for teachers/admins; everyone else is always 'student'
@@ -129,7 +146,8 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, loading, login, loginWithToken, signUp, signIn, logout,
-      role, canTrade, isAdmin, isTeacher, isReadonly,
+      joinClassWithToken,
+      role, canTrade, isAdmin, isTeacher, isStudent, isReadonly,
       viewMode: effectiveViewMode, toggleViewMode,
     }}>
       {children}

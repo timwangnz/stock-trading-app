@@ -93,6 +93,33 @@ export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
   })
 }
 
+export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalUsers }) {
+  await resend.emails.send({
+    from:    FROM,
+    to,
+    subject: `⚠️ TradeBuddy snapshot failures — ${date}`,
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+        <h2 style="color:#b91c1c;margin-bottom:8px">Daily snapshot failed</h2>
+        <p style="color:#555;margin-bottom:16px">
+          The daily portfolio snapshot ran on <strong>${date}</strong> but
+          <strong>${failedUserIds.length} of ${totalUsers} user(s)</strong> could not be snapshotted
+          after all retry attempts.
+        </p>
+        <p style="color:#555;margin-bottom:8px"><strong>Failed user IDs:</strong></p>
+        <pre style="background:#f3f4f6;padding:12px;border-radius:6px;font-size:13px;overflow-x:auto">${failedUserIds.join('\n')}</pre>
+        <p style="color:#555;margin-top:16px">
+          Check the server logs for details. You can re-trigger a snapshot manually via:<br/>
+          <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">POST /api/internal/snapshot-all</code>
+        </p>
+        <p style="color:#999;font-size:12px;margin-top:24px">
+          This alert was sent automatically by the TradeBuddy snapshot scheduler.
+        </p>
+      </div>
+    `,
+  })
+}
+
 export async function sendPasswordResetEmail({ to, name, resetUrl }) {
   await resend.emails.send({
     from:    FROM,

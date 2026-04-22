@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Shield, ChevronDown, ChevronUp, RefreshCw,
   UserX, UserCheck, Check, X, Users, Lock, ClipboardList,
-  GraduationCap, Globe, Loader2,
+  GraduationCap, Globe, Loader2, Terminal,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import clsx from 'clsx'
@@ -891,6 +891,260 @@ function AuditTab({ users }) {
   )
 }
 
+// ── Server Logs Tab ──────────────────────────────────────────────
+
+const STATUS_FILTERS = [
+  { value: '',    label: 'All'  },
+  { value: '2xx', label: '2xx' },
+  { value: '3xx', label: '3xx' },
+  { value: '4xx', label: '4xx' },
+  { value: '5xx', label: '5xx' },
+]
+
+function statusColor(status) {
+  if (!status) return 'text-muted'
+  if (status >= 500) return 'text-loss'
+  if (status >= 400) return 'text-orange-400'
+  if (status >= 300) return 'text-yellow-400'
+  return 'text-gain'
+}
+
+function statusBadgeClass(status) {
+  if (!status) return 'text-muted bg-surface-hover border-border'
+  if (status >= 500) return 'text-loss bg-loss/10 border-loss/20'
+  if (status >= 400) return 'text-orange-400 bg-orange-400/10 border-orange-400/20'
+  if (status >= 300) return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+  return 'text-gain bg-gain/10 border-gain/20'
+}
+
+function ServerLogsTab() {
+  const [entries,      setEntries]      = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [typeFilter,   setTypeFilter]   = useState('')     // '' | 'request' | 'error'
+  const [statusFilter, setStatusFilter] = useState('')     // '' | '2xx' | '4xx' | '5xx'
+  const [autoRefresh,  setAutoRefresh]  = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: 300 })
+      if (typeFilter)   params.set('type',   typeFilter)
+      if (statusFilter) params.set('status', statusFilter)
+      const data = await adminFetch(`/admin/server-logs?${params}`)
+      setEntries(data)
+    } catch (err) {
+      console.error('Failed to load server logs:', err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [typeFilter, statusFilter])
+
+  useEffect(() => { load() }, [load])
+
+  // Auto-refresh every 5 s when enabled
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [autoRefresh, load])
+
+  const errorCount   = entries.filter(e => e.type === 'error').length
+  const serverErrors = entries.filter(e => e.status >= 500).length
+
+  return (
+    <div className="space-y-4">
+
+      {/* Summary pills */}
+      <div className="flex gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border bg-surface-card border-border text-muted">
+          <Terminal size={11} />
+          {entries.length} entries
+        </div>
+        {errorCount > 0 && (
+          <div className="flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border bg-loss/10 border-loss/20 text-loss">
+            {errorCount} error{errorCount !== 1 ? 's' : ''}
+          </div>
+        )}
+        {serverErrors > 0 && (
+          <div className="flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border bg-orange-400/10 border-orange-400/20 text-orange-400">
+            {serverErrors} 5xx
+          </div>
+        )}
+      </div>
+
+      {/* Filters + controls */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Type filter */}
+        <div className="flex gap-1 bg-surface-hover rounded-lg p-0.5">
+          {[['', 'All'], ['request', 'Requests'], ['error', 'Errors']].map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setTypeFilter(val)}
+              className={clsx(
+                'text-xs px-2.5 py-1 rounded-md transition-colors',
+                typeFilter === val
+                  ? 'bg-surface-card text-primary shadow-sm'
+                  : 'text-muted hover:text-primary'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Status filter (requests only) */}
+        {typeFilter !== 'error' && (
+          <div className="flex gap-1 bg-surface-hover rounded-lg p-0.5">
+            {STATUS_FILTERS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => setStatusFilter(value)}
+                className={clsx(
+                  'text-xs px-2.5 py-1 rounded-md transition-colors',
+                  statusFilter === value
+                    ? 'bg-surface-card text-primary shadow-sm'
+                    : 'text-muted hover:text-primary'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 ml-auto">
+          {/* Auto-refresh toggle */}
+          <button
+            onClick={() => setAutoRefresh(a => !a)}
+            className={clsx(
+              'flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg border transition-colors',
+              autoRefresh
+                ? 'text-gain border-gain/30 bg-gain/10'
+                : 'text-muted border-border hover:text-primary'
+            )}
+          >
+            <span className={clsx(
+              'w-1.5 h-1.5 rounded-full',
+              autoRefresh ? 'bg-gain animate-pulse' : 'bg-muted'
+            )} />
+            {autoRefresh ? 'Live' : 'Auto-refresh'}
+          </button>
+
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-muted hover:text-primary text-xs transition-colors disabled:opacity-40"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Log table */}
+      {loading && entries.length === 0 ? (
+        <div className="text-muted text-sm text-center py-12">Loading server logs…</div>
+      ) : entries.length === 0 ? (
+        <div className="text-faint text-sm text-center py-12">No log entries yet — make some requests first</div>
+      ) : (
+        <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="border-b border-border text-muted text-left">
+                <th className="px-4 py-2.5 font-medium">Time</th>
+                <th className="px-4 py-2.5 font-medium">Type</th>
+                <th className="px-4 py-2.5 font-medium">Method</th>
+                <th className="px-4 py-2.5 font-medium">Path / Message</th>
+                <th className="px-4 py-2.5 font-medium text-center">Status</th>
+                <th className="px-4 py-2.5 font-medium text-right hidden md:table-cell">ms</th>
+                <th className="px-4 py-2.5 font-medium hidden lg:table-cell">IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e, i) => (
+                <tr
+                  key={e.id}
+                  className={clsx(
+                    'border-t border-border hover:bg-surface-hover transition-colors',
+                    i % 2 === 1 && 'bg-surface/30',
+                    e.type === 'error' && 'bg-loss/5',
+                  )}
+                >
+                  {/* Time */}
+                  <td className="px-4 py-2 text-muted whitespace-nowrap">
+                    {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </td>
+
+                  {/* Type badge */}
+                  <td className="px-4 py-2">
+                    <span className={clsx(
+                      'text-[10px] px-1.5 py-0.5 rounded border font-sans font-medium',
+                      e.type === 'error'
+                        ? 'text-loss bg-loss/10 border-loss/20'
+                        : 'text-accent-blue bg-accent-blue/10 border-accent-blue/20'
+                    )}>
+                      {e.type}
+                    </span>
+                  </td>
+
+                  {/* Method */}
+                  <td className="px-4 py-2">
+                    {e.method ? (
+                      <span className={clsx('font-semibold', {
+                        'text-gain':        e.method === 'GET',
+                        'text-accent-blue': e.method === 'POST',
+                        'text-yellow-400':  e.method === 'PUT',
+                        'text-loss':        e.method === 'DELETE',
+                        'text-muted':       !['GET','POST','PUT','DELETE'].includes(e.method),
+                      })}>
+                        {e.method}
+                      </span>
+                    ) : <span className="text-faint">—</span>}
+                  </td>
+
+                  {/* Path or error message */}
+                  <td className="px-4 py-2 max-w-xs truncate text-secondary font-sans">
+                    {e.path ?? e.message ?? '—'}
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-4 py-2 text-center">
+                    {e.status ? (
+                      <span className={clsx('text-[10px] px-1.5 py-0.5 rounded border font-medium', statusBadgeClass(e.status))}>
+                        {e.status}
+                      </span>
+                    ) : <span className="text-faint">—</span>}
+                  </td>
+
+                  {/* Duration */}
+                  <td className="px-4 py-2 text-right hidden md:table-cell">
+                    {e.ms != null ? (
+                      <span className={clsx(
+                        e.ms > 1000 ? 'text-loss' : e.ms > 300 ? 'text-orange-400' : 'text-muted'
+                      )}>
+                        {e.ms}
+                      </span>
+                    ) : <span className="text-faint">—</span>}
+                  </td>
+
+                  {/* IP */}
+                  <td className="px-4 py-2 text-faint hidden lg:table-cell">
+                    {e.ip ?? '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2 border-t border-border text-faint text-xs font-sans flex justify-between">
+            <span>Showing {entries.length} most recent entries · resets on server restart</span>
+            {autoRefresh && <span className="text-gain animate-pulse">● live</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main AdminPanel ──────────────────────────────────────────────
 
 const TABS = [
@@ -898,6 +1152,7 @@ const TABS = [
   { key: 'classes',     label: 'Classes',     Icon: GraduationCap },
   { key: 'permissions', label: 'Permissions', Icon: Lock          },
   { key: 'audit',       label: 'Audit Log',   Icon: ClipboardList },
+  { key: 'serverlogs',  label: 'Server Logs', Icon: Terminal      },
 ]
 
 export default function AdminPanel() {
@@ -1024,6 +1279,7 @@ export default function AdminPanel() {
       {activeTab === 'classes'     && <ClassesTab />}
       {activeTab === 'permissions' && <PermissionsTab />}
       {activeTab === 'audit'       && <AuditTab users={users} />}
+      {activeTab === 'serverlogs'  && <ServerLogsTab />}
     </div>
   )
 }

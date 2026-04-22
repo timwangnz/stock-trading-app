@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import {
   createClass, fetchManagedClasses, fetchClassDetail, fetchStudentDetail,
-  fetchClassLeaderboard, sendInvites, applyForTeacher, fetchTeacherApplicationStatus,
+  fetchClassLeaderboard, fetchMyClasses, sendInvites, applyForTeacher, fetchTeacherApplicationStatus,
 } from '../services/apiService'
 import { useAuth } from '../context/AuthContext'
 import clsx from 'clsx'
@@ -712,10 +712,193 @@ function TeacherApplyForm({ form, set, error, submitting, onSubmit }) {
   )
 }
 
+// ── Join-class view (for users who aren't yet a student or teacher) ───────────
+function JoinClassView() {
+  const { joinClassWithToken } = useAuth()
+  const [token,     setToken]     = useState('')
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState(null)
+  const [joined,    setJoined]    = useState(null) // { class_name, school_name }
+
+  // Auto-read ?join=TOKEN from the URL (invite links land here)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const t = params.get('join')
+    if (t) setToken(t)
+  }, [])
+
+  const handleJoin = async (e) => {
+    e.preventDefault()
+    if (!token.trim()) return
+    setLoading(true); setError(null)
+    try {
+      const result = await joinClassWithToken(token.trim())
+      setJoined({ class_name: result.class_name, school_name: result.school_name })
+      // Clean up the URL token param if present
+      window.history.replaceState({}, '', window.location.pathname)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (joined) return (
+    <div className="max-w-md mx-auto py-16 text-center space-y-4">
+      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gain/10">
+        <CheckCircle size={32} className="text-gain" />
+      </div>
+      <h2 className="text-primary font-semibold text-xl">You're in!</h2>
+      <p className="text-muted text-sm">
+        You've joined <strong className="text-primary">{joined.class_name}</strong>
+        {joined.school_name && <> at {joined.school_name}</>}.
+        Your account has been upgraded to <strong className="text-primary">Student</strong>.
+      </p>
+      <p className="text-muted text-xs">Refresh the page to see your class dashboard.</p>
+    </div>
+  )
+
+  return (
+    <div className="max-w-lg mx-auto py-8 space-y-6">
+      <div className="text-center space-y-2">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent-blue/10">
+          <GraduationCap size={32} className="text-accent-blue" />
+        </div>
+        <h2 className="text-primary font-semibold text-xl">Join a Class</h2>
+        <p className="text-muted text-sm leading-relaxed max-w-sm mx-auto">
+          Enter the invite token your teacher sent you. You'll be enrolled immediately
+          and your role will be set to <strong className="text-primary">Student</strong>.
+        </p>
+      </div>
+
+      <form onSubmit={handleJoin} className="bg-surface-card border border-border rounded-xl p-6 space-y-4">
+        <div>
+          <label className="text-muted text-xs mb-1.5 block">Invite Token</label>
+          <input
+            className="w-full bg-surface-hover border border-border rounded-lg px-3 py-2 text-primary text-sm font-mono focus:outline-none focus:border-accent-blue"
+            placeholder="Paste your invite token here…"
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            autoFocus
+          />
+          <p className="text-muted text-xs mt-1.5">
+            Check your email for a link — the token is the long code at the end of it.
+          </p>
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 text-loss text-xs bg-loss/10 border border-loss/20 rounded-lg px-3 py-2">
+            <AlertCircle size={13} className="shrink-0 mt-0.5" /> {error}
+          </div>
+        )}
+
+        <button type="submit" disabled={loading || !token.trim()}
+          className="w-full py-2.5 rounded-lg bg-accent-blue hover:opacity-90 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity">
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <GraduationCap size={14} />}
+          Join Class &amp; Become a Student
+        </button>
+      </form>
+
+      <div className="text-center">
+        <p className="text-muted text-xs">Are you an educator?</p>
+        <button
+          className="text-accent-blue text-xs hover:underline mt-0.5"
+          onClick={() => window.dispatchEvent(new CustomEvent('classroom:showTeacherApply'))}
+        >
+          Apply for a teacher account instead →
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Student dashboard ─────────────────────────────────────────────
+function StudentView() {
+  const [classes,  setClasses]  = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState(null)
+
+  useEffect(() => {
+    fetchMyClasses()
+      .then(setClasses)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div className="flex justify-center py-16">
+      <Loader2 size={22} className="animate-spin text-muted" />
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-primary font-semibold text-xl flex items-center gap-2">
+          <GraduationCap size={22} className="text-accent-blue" /> My Classes
+        </h1>
+        <p className="text-muted text-sm mt-1">Classes you're enrolled in as a student.</p>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-loss text-sm bg-loss/10 border border-loss/20 rounded-xl px-4 py-3">
+          <AlertCircle size={16} /> {error}
+        </div>
+      )}
+
+      {!error && classes.length === 0 && (
+        <div className="text-center py-16 space-y-2">
+          <GraduationCap size={36} className="text-muted mx-auto" />
+          <p className="text-primary font-medium">No classes yet</p>
+          <p className="text-muted text-sm">Ask your teacher to send you an invite link.</p>
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {classes.map(cls => (
+          <div key={cls.id} className="bg-surface-card border border-border rounded-xl p-5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-primary font-semibold">{cls.name}</h3>
+                <p className="text-muted text-sm">{cls.school_name} · {cls.state}</p>
+              </div>
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border text-gain border-gain/30 bg-gain/10 shrink-0">
+                Enrolled
+              </span>
+            </div>
+            <div className="text-xs text-muted space-y-1">
+              {cls.teacher_name && (
+                <p className="flex items-center gap-1.5">
+                  <School size={11} /> Teacher: {cls.teacher_name}
+                </p>
+              )}
+              <p className="flex items-center gap-1.5">
+                <BarChart2 size={11} /> Starting balance: {fmt(cls.start_balance)}
+              </p>
+              {cls.joined_at && (
+                <p className="flex items-center gap-1.5">
+                  <Clock size={11} /> Joined {new Date(cls.joined_at).toLocaleDateString()}
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────
 export default function Classroom() {
-  const { role } = useAuth()
-  const isTeacher = role === 'teacher' || role === 'admin'
+  const { role, isTeacher, isStudent } = useAuth()
+  // Allow teacher-apply link from JoinClassView to toggle this
+  const [showTeacherApply, setShowTeacherApply] = useState(false)
+
+  useEffect(() => {
+    const handler = () => setShowTeacherApply(true)
+    window.addEventListener('classroom:showTeacherApply', handler)
+    return () => window.removeEventListener('classroom:showTeacherApply', handler)
+  }, [])
 
   const [classes,     setClasses]     = useState([])
   const [loading,     setLoading]     = useState(true)
@@ -737,18 +920,31 @@ export default function Classroom() {
     setShowCreate(false)
   }
 
-  // Non-teachers see the application flow
+  // Students see their enrolled classes
+  if (isStudent) return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <StudentView />
+    </div>
+  )
+
+  // Non-teachers, non-students: show join form, or teacher-apply if they clicked the link
   if (!isTeacher) return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-primary font-semibold text-xl flex items-center gap-2">
-          <GraduationCap size={22} className="text-purple-400" /> My Classes
-        </h1>
-        <p className="text-muted text-sm mt-1">
-          Apply for a teacher account to create classes and run trading competitions.
-        </p>
-      </div>
-      <TeacherApplicationView />
+      {showTeacherApply ? (
+        <>
+          <div className="mb-6 flex items-center gap-3">
+            <button onClick={() => setShowTeacherApply(false)} className="text-muted hover:text-primary flex items-center gap-1 text-sm">
+              <ArrowLeft size={15} /> Back
+            </button>
+            <h1 className="text-primary font-semibold text-xl flex items-center gap-2">
+              <GraduationCap size={22} className="text-purple-400" /> Become a Teacher
+            </h1>
+          </div>
+          <TeacherApplicationView />
+        </>
+      ) : (
+        <JoinClassView />
+      )}
     </div>
   )
 

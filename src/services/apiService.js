@@ -273,3 +273,17 @@ export function approveTeacherVerification(id) {
 export function rejectTeacherVerification(id, reason) {
   return request('PUT', `/admin/teacher-verifications/${id}/reject`, { reason })
 }
+
+
+// ── Knowledge Base: Financial Statements ─────────────────────────
+
+/**
+ * Fetch financial statements for a ticker from Polygon.io.
+ * @param {string} ticker  — e.g. "AAPL"
+ * @param {string} timeframe — "annual" | "quarterly"
+ * @param {number} limit  — number of periods (max 8)
+ */
+export function getFinancials(ticker, timeframe = 'annual', limit = 4) {
+  const t = encodeURIComponent(ticker.toUpperCase())
+  return request('GET', `/financials/${t}?timeframe=${timeframe}&limit=${limit}`)
+}
