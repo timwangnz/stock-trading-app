@@ -46,11 +46,12 @@ export const PROVIDERS = {
   ollama: {
     label:  'Ollama (Local)',
     models: [
-      { id: 'gemma4',    label: 'Gemma 4 — default'        },
-      { id: 'gemma3',    label: 'Gemma 3'                  },
-      { id: 'llama3',    label: 'Llama 3'                  },
-      { id: 'mistral',   label: 'Mistral'                  },
-      { id: 'qwen2.5',   label: 'Qwen 2.5'                 },
+      { id: 'gemma4:26b-a4b-it-q4_K_M', label: 'Gemma 4 26B Q4 — default'   },
+      { id: 'gemma4',                    label: 'Gemma 4 (latest)'            },
+      { id: 'gemma3',                    label: 'Gemma 3'                     },
+      { id: 'llama3',                    label: 'Llama 3'                     },
+      { id: 'mistral',                   label: 'Mistral'                     },
+      { id: 'qwen2.5',                   label: 'Qwen 2.5'                    },
     ],
   },
 }
