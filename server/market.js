@@ -21,6 +21,7 @@
  *   GET /api/market/ticker/:symbol
  *   GET /api/market/search?q=apple&limit=8
  *   GET /api/market/prev-close/:symbol
+ *   GET /api/market/news/:symbol?limit=5
  */
 
 import { Router } from 'express'
@@ -193,6 +194,43 @@ router.get('/prev-close/:symbol', async (req, res) => {
     const data = await polyFetch(`/v2/aggs/ticker/${symbol}/prev?adjusted=true`)
     cacheSet(cacheKey, data, TTL.PREV_CLOSE)
     res.json(data)
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
+// ── News ─────────────────────────────────────────────────────────
+// GET /api/market/news/:symbol?limit=5
+//
+// Returns the most recent news articles for a ticker from Polygon.
+// Cached for 10 minutes so rapid page switches don't hammer the quota.
+router.get('/news/:symbol', async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase()
+  if (!validSymbol(symbol)) return res.status(400).json({ error: 'Invalid symbol' })
+
+  const limit    = Math.min(parseInt(req.query.limit ?? '5', 10), 10)
+  const cacheKey = `news:${symbol}:${limit}`
+  const cached   = cacheGet(cacheKey)
+  if (cached) return res.json(cached)
+
+  try {
+    const data = await polyFetch(
+      `/v2/reference/news?ticker=${symbol}&limit=${limit}&sort=published_utc&order=desc`
+    )
+    // Normalise to a compact shape so the frontend gets only what it needs
+    const articles = (data.results ?? []).map(a => ({
+      id:           a.id,
+      title:        a.title,
+      description:  a.description ?? null,
+      url:          a.article_url,
+      publishedAt:  a.published_utc,
+      source:       a.publisher?.name ?? 'Unknown',
+      imageUrl:     a.image_url ?? null,
+      tickers:      a.tickers ?? [],
+    }))
+    const result = { articles }
+    cacheSet(cacheKey, result, TTL.NEWS ?? 600_000)   // 10 min
+    res.json(result)
   } catch (err) {
     res.status(502).json({ error: err.message })
   }

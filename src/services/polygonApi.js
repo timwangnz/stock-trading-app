@@ -101,3 +101,9 @@ export function daysAgo(n) {
 export function today() {
   return new Date().toISOString().split('T')[0]
 }
+
+// ── News ──────────────────────────────────────────────────────────
+export async function getNews(symbol, limit = 5) {
+  const data = await apiFetch(`/news/${symbol.toUpperCase()}?limit=${limit}`)
+  return data.articles ?? []
+}

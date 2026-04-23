@@ -366,10 +366,11 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
       }
 
       setMessages(prev => [...prev, {
-        id:    Date.now() + 1,
-        role:  'agent',
-        text:  data.response,
-        trade: data.trade,
+        id:             Date.now() + 1,
+        role:           'agent',
+        text:           data.response,
+        trade:          data.trade,
+        fetchedTickers: data.tickersFetched ?? [],
       }])
 
       if (data.trade) onTradeExecuted?.()

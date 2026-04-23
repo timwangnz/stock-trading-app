@@ -3,6 +3,10 @@
  * Trading agent powered by the user's chosen LLM provider.
  * Supports Anthropic (Claude), OpenAI (GPT), and Google (Gemini).
  * Tool definitions are kept in Anthropic format; llm.js converts them.
+ *
+ * Live market data: before every LLM call we extract ticker symbols from
+ * the user message, fetch current snapshots from Polygon.io, and inject
+ * them into the system prompt — so the agent always answers with real prices.
  */
 
 import { readFileSync } from 'fs'
@@ -20,6 +24,157 @@ const USER_GUIDE = (() => {
     return '' // guide missing — agent still works without it
   }
 })()
+
+// ── Live market data helpers ─────────────────────────────────────
+
+// Common English words that look like tickers — never treat these as symbols
+const TICKER_STOP = new Set([
+  'A','I','OK','MY','IN','AT','ON','IF','OR','BY','TO','OF','AN',
+  'AS','UP','IS','IT','DO','SO','GO','NO','US','ME','HE','WE',
+  'AI','CEO','CFO','COO','ETF','IPO','GDP','USD','EUR','THE',
+  'AND','FOR','ALL','BUY','SELL','THIS','THAT','WHAT','WITH',
+])
+
+// Well-known company names → ticker (lower-cased keys)
+const NAME_TO_TICKER = {
+  apple: 'AAPL', microsoft: 'MSFT', google: 'GOOGL', alphabet: 'GOOGL',
+  amazon: 'AMZN', tesla: 'TSLA', meta: 'META', facebook: 'META',
+  nvidia: 'NVDA', netflix: 'NFLX', uber: 'UBER', airbnb: 'ABNB',
+  coinbase: 'COIN', palantir: 'PLTR', shopify: 'SHOP', spotify: 'SPOT',
+  intel: 'INTC', amd: 'AMD', qualcomm: 'QCOM', disney: 'DIS',
+  walmart: 'WMT', visa: 'V', mastercard: 'MA', paypal: 'PYPL',
+  salesforce: 'CRM', oracle: 'ORCL', ibm: 'IBM', boeing: 'BA',
+}
+
+/**
+ * Extract stock ticker symbols from a free-text message.
+ * Looks for $AAPL-style, plain UPPERCASE words, and known company names.
+ */
+function extractTickers(text) {
+  const tickers = new Set()
+  const lower   = text.toLowerCase()
+
+  // $TICKER pattern
+  for (const m of text.matchAll(/\$([A-Z]{1,5})\b/g)) tickers.add(m[1])
+
+  // Plain UPPERCASE 2–5 letter words
+  for (const m of text.matchAll(/\b([A-Z]{2,5})\b/g)) {
+    if (!TICKER_STOP.has(m[1])) tickers.add(m[1])
+  }
+
+  // Company name → ticker
+  for (const [name, sym] of Object.entries(NAME_TO_TICKER)) {
+    if (lower.includes(name)) tickers.add(sym)
+  }
+
+  return [...tickers]
+}
+
+/**
+ * Fetch up to 3 recent news headlines for a single ticker from Polygon.
+ * Returns a formatted string, or null on error / no results.
+ */
+async function fetchNewsForTicker(symbol, apiKey) {
+  try {
+    const res = await fetch(
+      `https://api.polygon.io/v2/reference/news?ticker=${symbol}&limit=3&sort=published_utc&order=desc&apiKey=${apiKey}`
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    const articles = data.results ?? []
+    if (articles.length === 0) return null
+
+    const lines = articles.map(a => {
+      const age = (() => {
+        const diff = Date.now() - new Date(a.published_utc).getTime()
+        const h    = Math.floor(diff / 3_600_000)
+        if (h < 1)  return 'just now'
+        if (h < 24) return `${h}h ago`
+        return `${Math.floor(h / 24)}d ago`
+      })()
+      return `  • [${age}] ${a.title}` +
+        (a.description ? ` — ${a.description.slice(0, 120)}${a.description.length > 120 ? '…' : ''}` : '')
+    })
+
+    return `[${symbol} Recent News]\n${lines.join('\n')}`
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch current price snapshots for a list of tickers directly from Polygon,
+ * and (in parallel) the latest 3 news headlines for each ticker.
+ * Returns a formatted context block ready to inject into the system prompt,
+ * plus the list of tickers that were successfully fetched.
+ * Returns null if POLYGON_API_KEY is unset or no tickers are provided.
+ */
+async function fetchLiveMarketContext(tickers) {
+  const key = process.env.POLYGON_API_KEY
+  if (!key || tickers.length === 0) return { contextBlock: null, tickersFetched: [] }
+
+  const uniqueSyms = [...new Set(tickers)].slice(0, 5)
+  const syms       = uniqueSyms.join(',')
+
+  try {
+    // Fetch price snapshots + news for all tickers in parallel
+    const [snapshotRes, ...newsResults] = await Promise.allSettled([
+      fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms}&apiKey=${key}`),
+      ...uniqueSyms.map(sym => fetchNewsForTicker(sym, key)),
+    ])
+
+    // ── Price data ────────────────────────────────────────────
+    if (snapshotRes.status !== 'fulfilled' || !snapshotRes.value.ok) {
+      return { contextBlock: null, tickersFetched: [] }
+    }
+    const data      = await snapshotRes.value.json()
+    const snapshots = (data.tickers ?? []).map(t => ({
+      symbol:    t.ticker,
+      price:     t.day?.c    || t.lastTrade?.p || t.prevDay?.c || 0,
+      change:    t.day?.c    ? parseFloat((t.todaysChange     ?? 0).toFixed(2)) : 0,
+      changePct: t.day?.c    ? parseFloat((t.todaysChangePerc ?? 0).toFixed(2)) : 0,
+      open:      t.day?.o    || 0,
+      high:      t.day?.h    || 0,
+      low:       t.day?.l    || 0,
+      prevClose: t.prevDay?.c || 0,
+      volume:    t.day?.v    || 0,
+    }))
+
+    if (snapshots.length === 0) return { contextBlock: null, tickersFetched: [] }
+
+    const priceLines = snapshots.map(s => {
+      const dir = s.change >= 0 ? '▲' : '▼'
+      return [
+        `[${s.symbol}]`,
+        `  Price:      $${s.price.toFixed(2)}`,
+        `  Change:     ${dir} $${Math.abs(s.change).toFixed(2)} (${Math.abs(s.changePct).toFixed(2)}%) today`,
+        `  Open:       $${s.open.toFixed(2)}   High: $${s.high.toFixed(2)}   Low: $${s.low.toFixed(2)}`,
+        `  Prev Close: $${s.prevClose.toFixed(2)}   Volume: ${s.volume.toLocaleString()}`,
+      ].join('\n')
+    })
+
+    // ── News data ──────────────────────────────────────────────
+    const newsBlocks = newsResults
+      .map(r => r.status === 'fulfilled' ? r.value : null)
+      .filter(Boolean)
+
+    // ── Assemble context block ─────────────────────────────────
+    let contextBlock =
+      '📈 LIVE MARKET DATA (Polygon.io — use these exact numbers in your answer):\n\n' +
+      priceLines.join('\n\n') +
+      '\n\nIMPORTANT: Always quote the exact prices above. Never use outdated or approximate values.'
+
+    if (newsBlocks.length > 0) {
+      contextBlock +=
+        '\n\n📰 RECENT NEWS (use these headlines to inform your analysis):\n\n' +
+        newsBlocks.join('\n\n')
+    }
+
+    return { contextBlock, tickersFetched: snapshots.map(s => s.symbol) }
+  } catch {
+    return { contextBlock: null, tickersFetched: [] }
+  }
+}
 
 // ── Tool definitions (Anthropic format — llm.js converts for other providers) ──
 
@@ -187,18 +342,38 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
         )
         .join('\n')
 
+  // ── Fetch live market data before calling the LLM ────────────────
+  // Extract tickers from: (1) explicit mentions in the message, and
+  // (2) the user's portfolio holdings (for "how are my holdings doing?" queries)
+  const portfolioTickers = (portfolio ?? []).map(h => h.symbol).filter(Boolean)
+  let   candidateTickers = extractTickers(message)
+
+  // If no tickers found but the message references the portfolio, use holdings
+  const isPortfolioQuery = /\b(portfolio|holdings?|positions?|my stock|mine)\b/i.test(message)
+  if (candidateTickers.length === 0 && isPortfolioQuery) {
+    candidateTickers = portfolioTickers
+  }
+
+  const { contextBlock, tickersFetched } = await fetchLiveMarketContext(candidateTickers)
+
+  // ── Build system prompt with optional live data section ──────────
+  const liveSection = contextBlock
+    ? `\n\n${contextBlock}`
+    : ''
+
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
 Help the user manage their simulated portfolio using the tools provided, and answer questions about how to use the app.
 
 Current portfolio:
 ${portfolioText}
-
+${liveSection}
 Trade execution guidelines:
 - Use execute_buy when the user wants to purchase shares
 - Use execute_sell when the user wants to sell a specific number of shares
 - Use remove_holding when the user says "remove", "close", "exit", or "sell all" a position
 - "sell half" → calculate shares / 2 (round to 3 decimal places)
-- If no price is given for a buy, make a reasonable estimate based on well-known stocks and note it in the reasoning
+- If live market data is shown above, use it as the price for buy/sell actions
+- If no price is given and no live data is available, make a reasonable estimate and note it
 - Always use UPPERCASE ticker symbols
 - For questions or analysis (no trade), respond conversationally with no tool call
 - Keep text responses to 1-2 sentences
@@ -218,7 +393,8 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
   if (!toolName) {
     return {
       response: text ?? "I'm not sure how to help with that. Try \"buy 10 AAPL at 180\" or \"sell half my TSLA\".",
-      trade: null,
+      trade:    null,
+      tickersFetched,
     }
   }
 
@@ -229,41 +405,54 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
       recordTransaction(userId, result.symbol, 'buy', shares, price, 'agent')
       return {
         response: `Bought ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} at $${price.toFixed(2)}. ${reasoning}`,
-        trade: { action: 'buy', ...result, price },
+        trade:    { action: 'buy', ...result, price },
+        tickersFetched,
       }
     }
     if (toolName === 'execute_sell') {
       const { symbol, shares, reasoning } = toolInput
-      // Fetch live price for transaction record
-      const livePrice = await (async () => {
+      // Re-use a price we already fetched, or fall back to a fresh Polygon call
+      const sym = symbol.toUpperCase()
+      let livePrice = 0
+      const already = tickersFetched.includes(sym)
+      if (already) {
+        // Price was fetched as part of the live-data pre-fetch above —
+        // parse it back out of contextBlock so we don't double-call Polygon
+        const m = contextBlock?.match(new RegExp(`\\[${sym}\\][\\s\\S]*?Price:\\s+\\$([\\d.]+)`))
+        livePrice = m ? parseFloat(m[1]) : 0
+      }
+      if (!livePrice) {
+        // Fallback: direct Polygon call
         try {
           const key = process.env.POLYGON_API_KEY
-          if (!key) return 0
-          const r = await fetch(
-            `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbol.toUpperCase()}&apiKey=${key}`
-          )
-          const d = await r.json()
-          const t = d.tickers?.[0]
-          return t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || 0
-        } catch { return 0 }
-      })()
+          if (key) {
+            const r = await fetch(
+              `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${sym}&apiKey=${key}`
+            )
+            const d = await r.json()
+            const t = d.tickers?.[0]
+            livePrice = t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || 0
+          }
+        } catch { /* non-fatal */ }
+      }
       const result = await sellStock(userId, symbol, shares, livePrice)
       if (livePrice > 0) recordTransaction(userId, result.symbol, 'sell', shares, livePrice, 'agent')
       const msg = result.removed
         ? `Sold all ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} — position closed. ${reasoning}`
         : `Sold ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol}. ${result.shares} remaining. ${reasoning}`
-      return { response: msg, trade: { action: result.removed ? 'remove' : 'sell', ...result } }
+      return { response: msg, trade: { action: result.removed ? 'remove' : 'sell', ...result }, tickersFetched }
     }
     if (toolName === 'remove_holding') {
       const { symbol, reasoning } = toolInput
       const result = await removeStock(userId, symbol)
       return {
         response: `Removed ${result.symbol} from your portfolio. ${reasoning}`,
-        trade: { action: 'remove', ...result },
+        trade:    { action: 'remove', ...result },
+        tickersFetched,
       }
     }
-    return { response: 'Unknown action — no trade executed.', trade: null }
+    return { response: 'Unknown action — no trade executed.', trade: null, tickersFetched }
   } catch (err) {
-    return { response: err.message, trade: null }
+    return { response: err.message, trade: null, tickersFetched }
   }
 }

@@ -67,6 +67,7 @@ export const TTL = {
   SEARCH:        300_000,        //  5 min  — ticker search
   PREV_CLOSE:  3_600_000,        //  1 hour — previous close
   FINANCIALS: 86_400_000,        // 24 hour — financial statements (update at most quarterly)
+  NEWS:        3_600_000,        //  1 hour — news headlines
 }
 
 // ── Periodic cleanup — evict expired entries every 5 minutes ─────

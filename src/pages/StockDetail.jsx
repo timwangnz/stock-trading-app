@@ -14,10 +14,10 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { Bell, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users, Plus, X, CheckCircle } from 'lucide-react'
+import { Bell, ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Users, Plus, X, CheckCircle, Newspaper } from 'lucide-react'
 import FinancialsPanel from '../components/FinancialsPanel'
 import { useApp, ACTIONS } from '../context/AppContext'
-import { getSnapshots, getAggregates, getTickerDetails, daysAgo, today } from '../services/polygonApi'
+import { getSnapshots, getAggregates, getTickerDetails, getNews, daysAgo, today } from '../services/polygonApi'
 import { fetchMyClasses, fetchRelatedStocks, buyAtMarket, sellAtMarket, fetchPortfolio } from '../services/apiService'
 import { STOCKS } from '../data/mockData'
 import { useTheme } from '../context/ThemeContext'
@@ -177,6 +177,10 @@ export default function StockDetail() {
   const [errorSnap,    setErrorSnap]    = useState(null)
   const [errorChart,   setErrorChart]   = useState(null)
 
+  // News
+  const [news,         setNews]         = useState([])
+  const [loadingNews,  setLoadingNews]  = useState(true)
+
   // Price alerts
   const { alerts, addAlert, removeAlert, dismissAlert, checkPrice } = usePriceAlerts(symbol)
   const [newTarget,    setNewTarget]    = useState('')
@@ -224,6 +228,17 @@ export default function StockDetail() {
       .catch(err => setErrorChart(err))
       .finally(() => setLoadingChart(false))
   }, [symbol, range])
+
+  // ── Fetch news on symbol change ───────────────────────────────
+  useEffect(() => {
+    if (!symbol) return
+    setLoadingNews(true)
+    setNews([])
+    getNews(symbol, 5)
+      .then(articles => setNews(articles))
+      .catch(() => setNews([]))
+      .finally(() => setLoadingNews(false))
+  }, [symbol])
 
   // ── Derived values ─────────────────────────────────────────
   // Fall back to static metadata if details haven't loaded yet
@@ -693,6 +708,73 @@ export default function StockDetail() {
 
       {/* ── Financial statements ──────────────────────── */}
       {symbol && <FinancialsPanel ticker={symbol} />}
+
+      {/* ── Recent News ──────────────────────────────── */}
+      <div className="bg-surface-card border border-border rounded-xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Newspaper size={15} className="text-accent-blue" />
+          <p className="text-primary text-sm font-medium">Recent News</p>
+        </div>
+
+        {loadingNews ? (
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="space-y-1.5 animate-pulse">
+                <div className="h-3 bg-surface-hover rounded w-3/4" />
+                <div className="h-2.5 bg-surface-hover rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+        ) : news.length === 0 ? (
+          <p className="text-muted text-sm">No recent news found for {symbol}.</p>
+        ) : (
+          <div className="divide-y divide-border/50">
+            {news.map((article, i) => {
+              const age = (() => {
+                const diff = Date.now() - new Date(article.publishedAt).getTime()
+                const h    = Math.floor(diff / 3_600_000)
+                if (h < 1)  return 'just now'
+                if (h < 24) return `${h}h ago`
+                return `${Math.floor(h / 24)}d ago`
+              })()
+              return (
+                <a
+                  key={article.id ?? i}
+                  href={article.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex gap-3 py-3 first:pt-0 last:pb-0 hover:opacity-80 transition-opacity"
+                >
+                  {/* Thumbnail */}
+                  {article.imageUrl ? (
+                    <img
+                      src={article.imageUrl}
+                      alt=""
+                      className="w-16 h-12 rounded-lg object-cover shrink-0 bg-surface-hover"
+                      onError={e => { e.currentTarget.style.display = 'none' }}
+                    />
+                  ) : (
+                    <div className="w-16 h-12 rounded-lg bg-surface-hover shrink-0 flex items-center justify-center">
+                      <Newspaper size={16} className="text-muted" />
+                    </div>
+                  )}
+                  {/* Text */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-primary text-sm font-medium leading-snug line-clamp-2 group-hover:text-accent-blue transition-colors">
+                      {article.title}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-muted text-xs truncate">{article.source}</span>
+                      <span className="text-faint text-xs shrink-0">· {age}</span>
+                    </div>
+                  </div>
+                  <ExternalLink size={12} className="text-faint shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </a>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* ── Class related stocks ──────────────────────── */}
       <ClassRelatedStocks symbol={symbol} />
