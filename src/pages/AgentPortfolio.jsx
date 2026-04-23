@@ -178,6 +178,7 @@ function SetupWizard({ onSetup }) {
 function RunCard({ run }) {
   const [open, setOpen] = useState(false)
   const decisions = run.decisions ?? []
+  const hasEstimates = decisions.some(d => d.priceSource === 'estimated')
 
   return (
     <div className="bg-surface-hover rounded-xl border border-border overflow-hidden">
@@ -190,9 +191,12 @@ function RunCard({ run }) {
             ? <CheckCircle2 size={14} className="text-gain shrink-0" />
             : <AlertCircle  size={14} className="text-loss shrink-0" />}
           <div className="text-left">
-            <p className="text-primary text-xs font-medium">
+            <p className="text-primary text-xs font-medium flex items-center gap-1.5">
               {run.status === 'success' ? `${run.trades_count} trade${run.trades_count !== 1 ? 's' : ''}` : 'Error'}
               {run.portfolio_value > 0 && ` · ${fmt$(run.portfolio_value)}`}
+              {hasEstimates && (
+                <span className="text-yellow-500/80 font-normal">· ~est. prices</span>
+              )}
             </p>
             <p className="text-faint text-xs">{relTime(run.created_at)}</p>
           </div>
@@ -205,17 +209,40 @@ function RunCard({ run }) {
           {run.summary && (
             <p className="text-secondary text-xs leading-relaxed">{run.summary}</p>
           )}
+
+          {/* Estimated-price notice */}
+          {hasEstimates && (
+            <div className="flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
+              <AlertCircle size={12} className="text-yellow-500/70 shrink-0 mt-0.5" />
+              <p className="text-yellow-500/70 text-xs leading-relaxed">
+                No live market data was available. Prices marked <span className="font-semibold">~est.</span> are the AI's best estimates from training knowledge and may not reflect actual market prices.
+              </p>
+            </div>
+          )}
+
           {decisions.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-faint text-xs font-medium uppercase tracking-wide">Decisions</p>
               {decisions.map((d, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs">
                   <span className="text-accent-blue font-mono font-semibold shrink-0 w-12">{d.symbol}</span>
-                  <span className="text-muted">{d.targetPct}% — {d.reasoning}</span>
+                  <span className="text-muted flex-1">{d.targetPct}%
+                    {d.estimatedPrice && (
+                      <span className={clsx(
+                        'ml-1 text-xs font-mono',
+                        d.priceSource === 'estimated' ? 'text-yellow-500/70' : 'text-faint'
+                      )}>
+                        {d.priceSource === 'estimated' ? `~$${d.estimatedPrice}` : `$${d.estimatedPrice}`}
+                        {d.priceSource === 'estimated' && <span className="ml-0.5 text-yellow-500/60">est.</span>}
+                      </span>
+                    )}
+                    {' '}— {d.reasoning}
+                  </span>
                 </div>
               ))}
             </div>
           )}
+
           {run.transactions?.length > 0 && (
             <div className="space-y-1">
               <p className="text-faint text-xs font-medium uppercase tracking-wide">Trades</p>

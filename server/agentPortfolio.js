@@ -88,11 +88,12 @@ const REBALANCE_TOOL = {
         items: {
           type: 'object',
           properties: {
-            symbol:    { type: 'string',  description: 'Uppercase ticker' },
-            targetPct: { type: 'number',  description: 'Target % of total portfolio value (0-100). All entries must sum to ≤ 95 (leave ≥ 5% as cash buffer).' },
-            reasoning: { type: 'string',  description: 'One sentence why this position is included at this size' },
+            symbol:         { type: 'string', description: 'Uppercase ticker, e.g. AAPL' },
+            targetPct:      { type: 'number', description: 'Target % of total portfolio value (0-100). All entries must sum to ≤ 95 (leave ≥ 5% as cash buffer).' },
+            estimatedPrice: { type: 'number', description: 'Your best estimate of the current share price in USD. Used as fallback if live price is unavailable.' },
+            reasoning:      { type: 'string', description: 'One sentence why this position is included at this size' },
           },
-          required: ['symbol', 'targetPct', 'reasoning'],
+          required: ['symbol', 'targetPct', 'estimatedPrice', 'reasoning'],
         },
       },
       summary: {
@@ -139,7 +140,8 @@ ${newsBlock || '  (no news available)'}
 RULES:
 - Return 3–8 stock positions that best match the user's bias
 - targetPct values must sum to ≤ 95 (always keep ≥ 5% cash buffer)
-- Use only stocks from the prices list above
+- For estimatedPrice: use the live price if shown above, otherwise use your best knowledge of the current share price
+- You MUST include estimatedPrice for every decision — it is required for trade execution
 - Explain each position in one sentence
 - Write a 2–3 sentence summary of your strategy this cycle
 - This is vibe (simulated) trading only — not real financial advice`
@@ -168,19 +170,23 @@ async function executeAgentTrades({ userId, runId, holdings, prices, decisions, 
   for (const h of holdings) currentMap[h.symbol] = { shares: parseFloat(h.shares), avgCost: parseFloat(h.avg_cost) }
 
   // Build target map from LLM decisions
-  const totalValue = holdings.reduce((s, h) => s + (prices[h.symbol] ?? 0) * parseFloat(h.shares), 0) + cash
+  // Use live price if available, fall back to LLM's own estimate
+  const totalValue = holdings.reduce((s, h) => {
+    const p = prices[h.symbol] || h.avg_cost
+    return s + p * parseFloat(h.shares)
+  }, 0) + cash
   const targetMap  = {}
   for (const d of decisions) {
-    const price       = prices[d.symbol]
+    const price = prices[d.symbol] || d.estimatedPrice   // ← fallback to LLM estimate
     if (!price) continue
     const targetValue = totalValue * (d.targetPct / 100)
-    targetMap[d.symbol] = { targetShares: targetValue / price, reasoning: d.reasoning }
+    targetMap[d.symbol] = { targetShares: targetValue / price, price, reasoning: d.reasoning }
   }
 
   // ── SELLS first (frees cash for buys) ────────────────────────
   for (const [sym, current] of Object.entries(currentMap)) {
     const target = targetMap[sym]
-    const price  = prices[sym] ?? 0
+    const price  = prices[sym] || target?.price || 0
     if (!target || target.targetShares < current.shares * 0.01) {
       // Sell entire position
       const proceeds = current.shares * price
@@ -219,7 +225,7 @@ async function executeAgentTrades({ userId, runId, holdings, prices, decisions, 
 
   // ── BUYS ─────────────────────────────────────────────────────
   for (const [sym, target] of Object.entries(targetMap)) {
-    const price   = prices[sym]
+    const price   = prices[sym] || target.price   // fall back to LLM estimate stored in targetMap
     if (!price) continue
     const current = currentMap[sym]?.shares ?? 0
     const needed  = target.targetShares - current
@@ -320,11 +326,17 @@ export async function runRebalance(userId, llmConfig = {}) {
     })
     if (!llmResult?.decisions?.length) throw new Error('LLM returned no decisions')
 
+    // Enrich decisions with price source so the UI can flag estimated prices
+    const enrichedDecisions = llmResult.decisions.map(d => ({
+      ...d,
+      priceSource: prices[d.symbol] ? 'live' : 'estimated',
+    }))
+
     // Create the run record (need the id for transaction foreign keys)
     const { rows: [run] } = await client.query(
       `INSERT INTO agent_runs (user_id, status, summary, decisions, trades_count, portfolio_value)
        VALUES ($1,'success',$2,$3,0,$4) RETURNING id`,
-      [userId, llmResult.summary, JSON.stringify(llmResult.decisions), totalValue.toFixed(2)]
+      [userId, llmResult.summary, JSON.stringify(enrichedDecisions), totalValue.toFixed(2)]
     )
 
     // Execute trades
