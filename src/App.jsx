@@ -66,6 +66,11 @@ export default function App() {
     })
   }, [user, joinToken])
 
+  // Close sidebar when navigating (mobile UX)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [state.currentPage])
+
   // While restoring the session from localStorage, show nothing
   if (loading) {
     return (
@@ -87,11 +92,6 @@ export default function App() {
   const requestedPage = state.currentPage
   const resolvedPage  = requestedPage === 'admin' && !isAdmin ? 'dashboard' : requestedPage
   const PageComponent = PAGES[resolvedPage] ?? Dashboard
-
-  // Close sidebar when navigating (mobile UX)
-  useEffect(() => {
-    setSidebarOpen(false)
-  }, [state.currentPage])
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface">
