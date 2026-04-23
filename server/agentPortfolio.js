@@ -156,16 +156,32 @@ RULES:
   )
 
   console.log(`[agent] LLM raw response  toolName=${raw.toolName}  hasToolInput=${!!raw.toolInput}  textLen=${raw.text?.length ?? 0}`)
-  if (raw.toolInput) {
-    const d = raw.toolInput.decisions ?? []
-    console.log(`[agent] LLM decisions (${d.length}):`)
-    d.forEach(dec => console.log(`  ${dec.symbol}  ${dec.targetPct}%  estimatedPrice=${dec.estimatedPrice ?? 'MISSING'}`))
-    if (!raw.toolInput.summary) console.warn('[agent] WARNING: LLM returned no summary')
-  } else {
+  if (!raw.toolInput) {
     console.warn('[agent] WARNING: LLM returned no toolInput — raw text:', raw.text?.slice(0, 400))
+    return null
   }
 
-  return raw.toolInput   // { decisions: [...], summary: '...' }
+  // Log the raw JSON so we can see exactly what field names the model used
+  console.log('[agent] LLM raw toolInput:', JSON.stringify(raw.toolInput, null, 2).slice(0, 1200))
+
+  // Normalize decisions — Ollama models often use 'ticker', 'stock', 'name', or 'code' instead of 'symbol',
+  // and 'target_pct', 'target', or 'allocation' instead of 'targetPct', etc.
+  const rawDecisions = raw.toolInput.decisions ?? raw.toolInput.allocations ?? raw.toolInput.positions ?? []
+  const normalized = rawDecisions.map(d => {
+    const symbol   = (d.symbol   || d.ticker  || d.stock  || d.name   || d.code  || '').toString().toUpperCase().trim()
+    const targetPct = d.targetPct ?? d.target_pct ?? d.target ?? d.allocation ?? d.pct ?? d.percentage ?? 0
+    const estPrice  = d.estimatedPrice ?? d.estimated_price ?? d.price ?? d.currentPrice ?? d.current_price ?? null
+    const reasoning = d.reasoning ?? d.reason ?? d.rationale ?? d.explanation ?? ''
+    if (!symbol) console.warn('[agent] Decision missing symbol — raw entry:', JSON.stringify(d))
+    return { symbol, targetPct: Number(targetPct), estimatedPrice: estPrice ? Number(estPrice) : null, reasoning }
+  }).filter(d => d.symbol)  // drop any that still have no symbol
+
+  const decisions = normalized
+  console.log(`[agent] LLM decisions after normalisation (${decisions.length}):`)
+  decisions.forEach(dec => console.log(`  ${dec.symbol}  ${dec.targetPct}%  estimatedPrice=${dec.estimatedPrice ?? 'MISSING'}`))
+  if (!raw.toolInput.summary) console.warn('[agent] WARNING: LLM returned no summary')
+
+  return { decisions, summary: raw.toolInput.summary ?? raw.toolInput.overview ?? raw.toolInput.rationale ?? '' }
 }
 
 // ── Trade execution ───────────────────────────────────────────────
