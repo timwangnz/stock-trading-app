@@ -1838,10 +1838,19 @@ scheduleNextSnapshot()
 
 // ── Agent Portfolio Routes ───────────────────────────────────────
 
-// Helper: load + decrypt a user's LLM config from DB
-async function getLLMConfigForUser(row) {
-  if (!row.api_key_enc) throw new Error('No API key configured for this user')
-  return { provider: row.provider || 'anthropic', model: row.model || 'claude-haiku-4-5-20251001', apiKey: decrypt(row.api_key_enc) }
+// Helper: build LLM config from a user_llm_settings row (or fall back to Ollama)
+// Ollama is the only provider that doesn't need an API key.
+function getLLMConfigForUser(row) {
+  const provider = row?.provider || 'ollama'
+  const model    = row?.model    || 'gemma3'
+  if (provider === 'ollama') {
+    return { provider: 'ollama', model, apiKey: null }
+  }
+  if (!row?.api_key_enc) {
+    // No cloud key — fall back to local Ollama rather than erroring
+    return { provider: 'ollama', model: 'gemma3', apiKey: null }
+  }
+  return { provider, model, apiKey: decrypt(row.api_key_enc) }
 }
 
 // GET  /api/agent-portfolio  — full state (settings, holdings, runs, summary)
@@ -1912,14 +1921,12 @@ app.patch('/api/agent-portfolio/settings', authMiddleware, async (req, res) => {
 // POST /api/agent-portfolio/run  — manually trigger a rebalance now
 app.post('/api/agent-portfolio/run', authMiddleware, async (req, res) => {
   try {
+    // Load LLM settings — falls back to local Ollama if no cloud key is set
     const { rows: [llmRow] } = await pool.query(
       'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id=$1',
       [req.user.id]
     )
-    if (!llmRow?.api_key_enc) {
-      return res.status(400).json({ error: 'No API key configured. Add one in Trading Agent settings (⚙️).' })
-    }
-    const llmConfig = await getLLMConfigForUser(llmRow)
+    const llmConfig = getLLMConfigForUser(llmRow ?? {})
     const result    = await runRebalance(req.user.id, llmConfig)
     res.json(result)
   } catch (err) {

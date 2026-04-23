@@ -1,14 +1,21 @@
 /**
  * server/llm.js
  * Multi-provider LLM adapter.
- * Normalises Anthropic, OpenAI, and Google Gemini into one interface.
+ * Normalises Anthropic, OpenAI, Google Gemini, and local Ollama into one interface.
  *
  * All tool definitions are passed in Anthropic format (input_schema).
  * This module converts them to each provider's native format and parses
  * the response back into a unified { text, toolName, toolInput } object.
  *
- * Supported providers: 'anthropic' | 'openai' | 'google'
+ * Supported providers: 'anthropic' | 'openai' | 'google' | 'ollama'
+ *
+ * Ollama notes:
+ *  - Calls http://localhost:11434 (or OLLAMA_URL env var) — no API key needed
+ *  - Supports tool use for compatible models (gemma3, llama3, mistral…)
+ *  - Falls back to JSON extraction from text if tool call is not returned
  */
+
+const OLLAMA_BASE = process.env.OLLAMA_URL ?? 'http://localhost:11434'
 
 // ── Provider model lists (shown in the UI settings) ──────────────
 export const PROVIDERS = {
@@ -34,6 +41,15 @@ export const PROVIDERS = {
       { id: 'gemini-2.0-flash',    label: 'Gemini 2.0 Flash — fast & cheap' },
       { id: 'gemini-1.5-flash',    label: 'Gemini 1.5 Flash — balanced'     },
       { id: 'gemini-1.5-pro',      label: 'Gemini 1.5 Pro — most capable'   },
+    ],
+  },
+  ollama: {
+    label:  'Ollama (Local)',
+    models: [
+      { id: 'gemma3',    label: 'Gemma 3 — default'       },
+      { id: 'llama3',    label: 'Llama 3'                  },
+      { id: 'mistral',   label: 'Mistral'                  },
+      { id: 'qwen2.5',   label: 'Qwen 2.5'                 },
     ],
   },
 }
@@ -161,6 +177,78 @@ async function callGemini({ apiKey, model, systemPrompt, userMessage, tools }) {
   }
 }
 
+// ── Ollama JSON fallback ──────────────────────────────────────────
+// When a local model returns plain text instead of a tool call, try to
+// extract a JSON object from the response. Handles:
+//   • ```json ... ``` fenced blocks
+//   • bare { ... } objects anywhere in the text
+function extractJsonFromText(text, toolName) {
+  if (!text) return null
+  // Try fenced code block first
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  const raw    = fenced ? fenced[1] : text
+  // Find the outermost { ... }
+  const start  = raw.indexOf('{')
+  const end    = raw.lastIndexOf('}')
+  if (start === -1 || end === -1) return null
+  try {
+    const parsed = JSON.parse(raw.slice(start, end + 1))
+    // Validate it looks like a tool input (has at least one expected key)
+    if (typeof parsed === 'object' && parsed !== null) {
+      return { toolName, toolInput: parsed, text: null }
+    }
+  } catch { /* malformed JSON */ }
+  return null
+}
+
+async function callOllama({ model, systemPrompt, userMessage, tools }) {
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: userMessage  },
+  ]
+
+  // Ollama uses OpenAI-compatible tool format
+  const body = {
+    model,
+    messages,
+    stream: false,
+    tools:  tools ? toOpenAITools(tools) : undefined,
+  }
+
+  let res
+  try {
+    res = await fetch(`${OLLAMA_BASE}/api/chat`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
+  } catch (err) {
+    throw new Error(`Ollama unreachable at ${OLLAMA_BASE} — is it running? (${err.message})`)
+  }
+  if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
+  const data = await res.json()
+
+  const msg      = data.message ?? {}
+  const toolCall = msg.tool_calls?.[0]
+
+  // ── Tool call returned ────────────────────────────────────────
+  if (toolCall) {
+    const args = typeof toolCall.function.arguments === 'string'
+      ? JSON.parse(toolCall.function.arguments)
+      : toolCall.function.arguments
+    return { text: null, toolName: toolCall.function.name, toolInput: args }
+  }
+
+  // ── No tool call — try to extract JSON from text (fallback) ───
+  const text = msg.content ?? null
+  if (tools?.length && text) {
+    const fallback = extractJsonFromText(text, tools[0].name)
+    if (fallback) return fallback
+  }
+
+  return { text, toolName: null, toolInput: null }
+}
+
 // ── Public API ───────────────────────────────────────────────────
 
 /**
@@ -175,6 +263,7 @@ export async function callLLM(cfg, params) {
     case 'anthropic': return callAnthropic({ apiKey, model, ...params })
     case 'openai':    return callOpenAI   ({ apiKey, model, ...params })
     case 'google':    return callGemini   ({ apiKey, model, ...params })
+    case 'ollama':    return callOllama   ({ model, ...params })
     default: throw new Error(`Unknown provider: ${provider}`)
   }
 }
