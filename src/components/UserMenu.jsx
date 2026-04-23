@@ -6,11 +6,13 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { LogOut } from 'lucide-react'
+import { LogOut, UserCircle } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useApp, ACTIONS } from '../context/AppContext'
 
 export default function UserMenu() {
-  const { user, logout }  = useAuth()
+  const { user, logout }    = useAuth()
+  const { dispatch }        = useApp()
   const [open, setOpen]   = useState(false)
   const menuRef           = useRef(null)
 
@@ -63,6 +65,16 @@ export default function UserMenu() {
           </div>
 
           {/* Actions */}
+          <button
+            onClick={() => { setOpen(false); dispatch({ type: ACTIONS.NAVIGATE, payload: 'customerprofile' }) }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted hover:text-primary hover:bg-surface-hover transition-colors"
+          >
+            <UserCircle size={14} />
+            Customer Profile
+          </button>
+
+          <div className="border-t border-border" />
+
           <button
             onClick={() => { setOpen(false); logout() }}
             className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted hover:text-primary hover:bg-surface-hover transition-colors"

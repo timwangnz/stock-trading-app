@@ -13,33 +13,33 @@ import clsx from 'clsx'
 
 // Nav for regular traders (user / premium) — no classroom-specific items
 const TRADER_NAV = [
-  { label: 'Dashboard',      page: 'dashboard',     icon: LayoutDashboard },
-  { label: 'Portfolio',      page: 'portfolio',     icon: Briefcase },
-  { label: 'History',        page: 'history',       icon: BarChart2 },
-  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
-  { label: 'Activity',       page: 'activity',      icon: Activity },
-  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
+  { label: 'Dashboard',        page: 'dashboard',       icon: LayoutDashboard },
+  { label: 'Portfolio',        page: 'portfolio',       icon: Briefcase },
+  { label: 'History',          page: 'history',         icon: BarChart2 },
+  { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
+  { label: 'Activity',         page: 'activity',        icon: Activity },
+  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
 ]
 
 // Nav for students in a class — includes classroom-specific items
 const STUDENT_NAV = [
-  { label: 'Dashboard',      page: 'dashboard',     icon: LayoutDashboard },
-  { label: 'Portfolio',      page: 'portfolio',     icon: Briefcase },
-  { label: 'History',        page: 'history',       icon: BarChart2 },
-  { label: 'Leaderboard',    page: 'leaderboard',   icon: Trophy },
-  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
-  { label: 'Activity',       page: 'activity',      icon: Activity },
-  { label: 'My Groups',      page: 'groups',        icon: Users },
-  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
+  { label: 'Dashboard',        page: 'dashboard',       icon: LayoutDashboard },
+  { label: 'Portfolio',        page: 'portfolio',       icon: Briefcase },
+  { label: 'History',          page: 'history',         icon: BarChart2 },
+  { label: 'Leaderboard',      page: 'leaderboard',     icon: Trophy },
+  { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
+  { label: 'Activity',         page: 'activity',        icon: Activity },
+  { label: 'My Groups',        page: 'groups',          icon: Users },
+  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
 ]
 
 // Nav items shown in Teacher mode (teacher/admin only)
 const TEACHER_NAV = [
-  { label: 'My Classes',     page: 'classroom',     icon: GraduationCap },
-  { label: 'Leaderboard',    page: 'leaderboard',   icon: Trophy },
-  { label: 'Ideas',          page: 'ideas',         icon: Lightbulb },
-  { label: 'Activity',       page: 'activity',      icon: Activity },
-  { label: 'Knowledge Base', page: 'knowledgebase', icon: BookOpen },
+  { label: 'My Classes',       page: 'classroom',       icon: GraduationCap },
+  { label: 'Leaderboard',      page: 'leaderboard',     icon: Trophy },
+  { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
+  { label: 'Activity',         page: 'activity',        icon: Activity },
+  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
 ]
 
 export default function Sidebar() {

@@ -1558,6 +1558,110 @@ app.put('/api/admin/teacher-verifications/:id/reject', adminOnly, async (req, re
   }
 })
 
+// ── Customer Profile ────────────────────────────────────────────────
+// GET  /api/customer-profile  → fetch the logged-in user's profile
+// PUT  /api/customer-profile  → upsert (create or update) the profile
+
+app.get('/api/customer-profile', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT title, company, phone, location, loyalty_tier, notes, tags,
+              honorific, nickname, dob, gender, address,
+              first_name, middle_name, last_name, updated_at
+       FROM customer_profiles
+       WHERE user_id = $1`,
+      [req.user.id]
+    )
+    if (rows.length === 0) {
+      return res.json({
+        title: '', company: '', phone: '', location: '',
+        loyaltyTier: 'Bronze', notes: '', tags: [],
+        honorific: '', nickname: '', dob: null, gender: '', address: '',
+        firstName: '', middleName: '', lastName: '',
+      })
+    }
+    const row = rows[0]
+    res.json({
+      title:       row.title,
+      company:     row.company,
+      phone:       row.phone,
+      location:    row.location,
+      loyaltyTier: row.loyalty_tier,
+      notes:       row.notes,
+      tags:        row.tags,
+      honorific:   row.honorific,
+      nickname:    row.nickname,
+      dob:         row.dob ? row.dob.toISOString().slice(0, 10) : null,
+      gender:      row.gender,
+      address:     row.address,
+      firstName:   row.first_name,
+      middleName:  row.middle_name,
+      lastName:    row.last_name,
+      updatedAt:   row.updated_at,
+    })
+  } catch (err) {
+    console.error('GET /api/customer-profile error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch customer profile' })
+  }
+})
+
+app.put('/api/customer-profile', authMiddleware, async (req, res) => {
+  const {
+    title = '', company = '', phone = '', location = '',
+    loyaltyTier = 'Bronze', notes = '', tags = [],
+    honorific = '', nickname = '', dob = null, gender = '', address = '',
+    firstName = '', middleName = '', lastName = '',
+  } = req.body
+
+  const VALID_TIERS = ['Bronze', 'Silver', 'Gold', 'Platinum']
+  if (!VALID_TIERS.includes(loyaltyTier)) {
+    return res.status(400).json({ error: 'Invalid loyalty tier' })
+  }
+  if (!Array.isArray(tags)) {
+    return res.status(400).json({ error: 'tags must be an array' })
+  }
+  // Validate dob is a valid date string or null
+  const dobValue = dob && /^\d{4}-\d{2}-\d{2}$/.test(dob) ? dob : null
+
+  try {
+    await pool.query(
+      `INSERT INTO customer_profiles
+         (user_id, title, company, phone, location, loyalty_tier, notes, tags,
+          honorific, nickname, dob, gender, address,
+          first_name, middle_name, last_name, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         title        = EXCLUDED.title,
+         company      = EXCLUDED.company,
+         phone        = EXCLUDED.phone,
+         location     = EXCLUDED.location,
+         loyalty_tier = EXCLUDED.loyalty_tier,
+         notes        = EXCLUDED.notes,
+         tags         = EXCLUDED.tags,
+         honorific    = EXCLUDED.honorific,
+         nickname     = EXCLUDED.nickname,
+         dob          = EXCLUDED.dob,
+         gender       = EXCLUDED.gender,
+         address      = EXCLUDED.address,
+         first_name   = EXCLUDED.first_name,
+         middle_name  = EXCLUDED.middle_name,
+         last_name    = EXCLUDED.last_name,
+         updated_at   = NOW()`,
+      [
+        req.user.id,
+        title.trim(), company.trim(), phone.trim(), location.trim(),
+        loyaltyTier, notes.trim(), JSON.stringify(tags),
+        honorific.trim(), nickname.trim(), dobValue, gender.trim(), address.trim(),
+        firstName.trim(), middleName.trim(), lastName.trim(),
+      ]
+    )
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('PUT /api/customer-profile error:', err.message)
+    res.status(500).json({ error: 'Failed to save customer profile' })
+  }
+})
+
 // ── Catch-all: serve React app for any non-API route (production) ──
 // Must come AFTER all /api/* routes so the API still works.
 if (isProd) {

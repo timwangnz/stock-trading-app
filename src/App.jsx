@@ -22,20 +22,22 @@ import Classroom     from './pages/Classroom'
 import Leaderboard   from './pages/Leaderboard'
 import Ideas         from './pages/Ideas'
 import Groups        from './pages/Groups'
-import KnowledgeBase from './pages/KnowledgeBase'
+import KnowledgeBase     from './pages/KnowledgeBase'
+import CustomerProfile  from './pages/CustomerProfile'
 
 const PAGES = {
-  dashboard:     Dashboard,
-  portfolio:     Portfolio,
-  stock:         StockDetail,
-  admin:         AdminPanel,
-  history:       History,
-  activity:      Activity,
-  classroom:     Classroom,
-  leaderboard:   Leaderboard,
-  ideas:         Ideas,
-  groups:        Groups,
-  knowledgebase: KnowledgeBase,
+  dashboard:       Dashboard,
+  portfolio:       Portfolio,
+  stock:           StockDetail,
+  admin:           AdminPanel,
+  history:         History,
+  activity:        Activity,
+  classroom:       Classroom,
+  leaderboard:     Leaderboard,
+  ideas:           Ideas,
+  groups:          Groups,
+  knowledgebase:   KnowledgeBase,
+  customerprofile: CustomerProfile,
 }
 
 // Read URL params once at module load (before any re-renders strip them)

@@ -347,6 +347,42 @@ async function setup() {
   await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_verif_status ON teacher_verifications (status)`)
   console.log('✅ Table "teacher_verifications" ready')
 
+  // ── customer_profiles ────────────────────────────────────────
+  // Extended profile for each user: title, company, contact info,
+  // loyalty tier, internal notes, and a JSONB tags array.
+  // One row per user (upserted on save).
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS customer_profiles (
+      user_id      VARCHAR(50)  PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      title        VARCHAR(255) NOT NULL DEFAULT '',
+      company      VARCHAR(255) NOT NULL DEFAULT '',
+      phone        VARCHAR(50)  NOT NULL DEFAULT '',
+      location     VARCHAR(255) NOT NULL DEFAULT '',
+      loyalty_tier VARCHAR(20)  NOT NULL DEFAULT 'Bronze'
+                   CHECK (loyalty_tier IN ('Bronze','Silver','Gold','Platinum')),
+      notes        TEXT         NOT NULL DEFAULT '',
+      tags         JSONB        NOT NULL DEFAULT '[]',
+      updated_at   TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `)
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_customer_profiles_user
+      ON customer_profiles (user_id)
+  `)
+  // ── Migrate existing customer_profiles table (add columns introduced after initial deploy) ──
+  await client.query(`
+    ALTER TABLE customer_profiles
+      ADD COLUMN IF NOT EXISTS honorific   VARCHAR(20)  NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS nickname    VARCHAR(100) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS dob         DATE         NULL,
+      ADD COLUMN IF NOT EXISTS gender      VARCHAR(50)  NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS address     TEXT         NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS first_name  VARCHAR(100) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS middle_name VARCHAR(100) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS last_name   VARCHAR(100) NOT NULL DEFAULT ''
+  `)
+  console.log('✅ Table "customer_profiles" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

@@ -287,3 +287,23 @@ export function getFinancials(ticker, timeframe = 'annual', limit = 4) {
   const t = encodeURIComponent(ticker.toUpperCase())
   return request('GET', `/financials/${t}?timeframe=${timeframe}&limit=${limit}`)
 }
+
+// ── Customer Profile ─────────────────────────────────────────────
+
+/** Fetch the logged-in user's recent activity from the audit log */
+export function fetchUserActivity(limit = 20) {
+  return request('GET', `/audit?limit=${limit}`)
+}
+
+/** Fetch the logged-in user's customer profile */
+export function fetchCustomerProfile() {
+  return request('GET', '/customer-profile')
+}
+
+/**
+ * Save (upsert) the logged-in user's customer profile.
+ * @param {{ title, company, phone, location, loyaltyTier, notes, tags }} profile
+ */
+export function saveCustomerProfile(profile) {
+  return request('PUT', '/customer-profile', profile)
+}
