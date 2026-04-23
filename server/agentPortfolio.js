@@ -11,8 +11,8 @@
  *  6. Schedule next run
  */
 
-import pool       from './db.js'
-import { callLLM } from './llm.js'
+import pool                       from './db.js'
+import { callLLM, extractJsonFromText } from './llm.js'
 
 // ── Candidate stock universe the agent can pick from ─────────────
 // A broad cross-sector watchlist. The LLM selects a subset based on bias.
@@ -159,6 +159,20 @@ RULES:
   if (!raw.toolInput) {
     console.warn('[agent] WARNING: LLM returned no toolInput — raw text:', raw.text?.slice(0, 400))
     return null
+  }
+
+  // Second-chance: if callOllama's extractor failed, try again here with the raw text
+  if (!raw.toolInput && raw.text) {
+    console.warn('[agent] toolInput missing — retrying JSON extraction from raw text...')
+    console.log('[agent] Full raw text:', raw.text)
+    const retry = extractJsonFromText(raw.text, raw.toolName ?? 'rebalance_portfolio')
+    if (retry?.toolInput) {
+      raw.toolInput = retry.toolInput
+      console.log('[agent] Retry extraction succeeded')
+    } else {
+      console.error('[agent] Retry extraction also failed — giving up')
+      return null
+    }
   }
 
   // Log the raw JSON so we can see exactly what field names the model used

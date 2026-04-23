@@ -184,7 +184,17 @@ async function callGemini({ apiKey, model, systemPrompt, userMessage, tools }) {
 // extract a JSON object from the response. Handles:
 //   • ```json ... ``` fenced blocks
 //   • bare { ... } objects anywhere in the text
-function extractJsonFromText(text, toolName) {
+//   • trailing commas and other minor LLM JSON quirks
+
+/** Attempt light repairs on JSON that local models commonly produce */
+function repairJson(s) {
+  return s
+    .replace(/,\s*([\]}])/g, '$1')   // trailing commas before ] or }
+    .replace(/([{,]\s*)(\w+)\s*:/g,  // unquoted keys  { foo: }  →  { "foo": }
+      (_, pre, key) => `${pre}"${key}":`)
+}
+
+export function extractJsonFromText(text, toolName) {
   if (!text) return null
   // Try fenced code block first
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -193,13 +203,17 @@ function extractJsonFromText(text, toolName) {
   const start  = raw.indexOf('{')
   const end    = raw.lastIndexOf('}')
   if (start === -1 || end === -1) return null
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1))
-    // Validate it looks like a tool input (has at least one expected key)
-    if (typeof parsed === 'object' && parsed !== null) {
-      return { toolName, toolInput: parsed, text: null }
-    }
-  } catch { /* malformed JSON */ }
+  const slice  = raw.slice(start, end + 1)
+  // Try raw first, then with light repairs
+  for (const attempt of [slice, repairJson(slice)]) {
+    try {
+      const parsed = JSON.parse(attempt)
+      if (typeof parsed === 'object' && parsed !== null) {
+        return { toolName, toolInput: parsed, text: null }
+      }
+    } catch { /* try next */ }
+  }
+  console.warn('[ollama] extractJsonFromText: all parse attempts failed — slice preview:', slice.slice(0, 300))
   return null
 }
 
