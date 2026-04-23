@@ -41,6 +41,7 @@ import { verifyGoogleToken, exchangeGoogleCode, signJwt, authMiddleware } from '
 import { OAuth2Client } from 'google-auth-library'
 import { requireRole, requirePermission, requireNonStudent, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
+import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextRun } from './agentPortfolio.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
 import marketRouter                    from './market.js'
@@ -1834,6 +1835,144 @@ function scheduleNextSnapshot() {
 }
 
 scheduleNextSnapshot()
+
+// ── Agent Portfolio Routes ───────────────────────────────────────
+
+// Helper: load + decrypt a user's LLM config from DB
+async function getLLMConfigForUser(row) {
+  if (!row.api_key_enc) throw new Error('No API key configured for this user')
+  return { provider: row.provider || 'anthropic', model: row.model || 'claude-haiku-4-5-20251001', apiKey: decrypt(row.api_key_enc) }
+}
+
+// GET  /api/agent-portfolio  — full state (settings, holdings, runs, summary)
+app.get('/api/agent-portfolio', authMiddleware, async (req, res) => {
+  try {
+    const state = await getAgentPortfolioState(req.user.id)
+    res.json(state)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/agent-portfolio/setup  — create or replace the agent portfolio
+app.post('/api/agent-portfolio/setup', authMiddleware, async (req, res) => {
+  const { startingCash, bias, frequency } = req.body
+  if (!startingCash || !bias?.trim() || !frequency) {
+    return res.status(400).json({ error: 'startingCash, bias, and frequency are required' })
+  }
+  if (!['daily','weekly','monthly'].includes(frequency)) {
+    return res.status(400).json({ error: 'frequency must be daily, weekly, or monthly' })
+  }
+  const cash = parseFloat(startingCash)
+  if (isNaN(cash) || cash < 100) {
+    return res.status(400).json({ error: 'startingCash must be at least $100' })
+  }
+  try {
+    const nextRun = calcNextRun(frequency)
+    await pool.query(
+      `INSERT INTO agent_portfolio_settings (user_id, cash, starting_cash, bias, frequency, next_run_at)
+       VALUES ($1,$2,$2,$3,$4,$5)
+       ON CONFLICT (user_id) DO UPDATE
+         SET cash=$2, starting_cash=$2, bias=$3, frequency=$4,
+             next_run_at=$5, status='active', updated_at=NOW()`,
+      [req.user.id, cash, bias.trim(), frequency, nextRun]
+    )
+    // Clear any old holdings & runs for a fresh start
+    await pool.query('DELETE FROM agent_holdings     WHERE user_id=$1', [req.user.id])
+    await pool.query('DELETE FROM agent_runs         WHERE user_id=$1', [req.user.id])
+    await pool.query('DELETE FROM agent_transactions WHERE user_id=$1', [req.user.id])
+    res.json({ ok: true, nextRun })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/agent-portfolio/settings  — update bias/frequency/status without resetting
+app.patch('/api/agent-portfolio/settings', authMiddleware, async (req, res) => {
+  const { bias, frequency, status } = req.body
+  try {
+    const updates = []
+    const vals    = []
+    if (bias?.trim())  { updates.push(`bias=$${updates.length+1}`)      ; vals.push(bias.trim()) }
+    if (frequency)     { updates.push(`frequency=$${updates.length+1}`) ; vals.push(frequency)   }
+    if (status)        { updates.push(`status=$${updates.length+1}`)    ; vals.push(status)      }
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' })
+    updates.push('updated_at=NOW()')
+    vals.push(req.user.id)
+    await pool.query(
+      `UPDATE agent_portfolio_settings SET ${updates.join(',')} WHERE user_id=$${vals.length}`,
+      vals
+    )
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/agent-portfolio/run  — manually trigger a rebalance now
+app.post('/api/agent-portfolio/run', authMiddleware, async (req, res) => {
+  try {
+    const { rows: [llmRow] } = await pool.query(
+      'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id=$1',
+      [req.user.id]
+    )
+    if (!llmRow?.api_key_enc) {
+      return res.status(400).json({ error: 'No API key configured. Add one in Trading Agent settings (⚙️).' })
+    }
+    const llmConfig = await getLLMConfigForUser(llmRow)
+    const result    = await runRebalance(req.user.id, llmConfig)
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET  /api/agent-portfolio/history  — paginated run history with transactions
+app.get('/api/agent-portfolio/history', authMiddleware, async (req, res) => {
+  const limit  = Math.min(parseInt(req.query.limit  ?? '20', 10), 50)
+  const offset = parseInt(req.query.offset ?? '0', 10)
+  try {
+    const { rows: runs } = await pool.query(
+      `SELECT * FROM agent_runs WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [req.user.id, limit, offset]
+    )
+    // Attach transactions to each run
+    const runIds = runs.map(r => r.id)
+    let txnMap   = {}
+    if (runIds.length) {
+      const { rows: txns } = await pool.query(
+        `SELECT * FROM agent_transactions WHERE run_id = ANY($1) ORDER BY created_at`,
+        [runIds]
+      )
+      for (const t of txns) {
+        if (!txnMap[t.run_id]) txnMap[t.run_id] = []
+        txnMap[t.run_id].push(t)
+      }
+    }
+    res.json(runs.map(r => ({ ...r, transactions: txnMap[r.id] ?? [] })))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/agent-portfolio  — liquidate everything and reset
+app.delete('/api/agent-portfolio', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM agent_holdings     WHERE user_id=$1', [req.user.id])
+    await pool.query('DELETE FROM agent_runs         WHERE user_id=$1', [req.user.id])
+    await pool.query('DELETE FROM agent_transactions WHERE user_id=$1', [req.user.id])
+    await pool.query('DELETE FROM agent_portfolio_settings WHERE user_id=$1', [req.user.id])
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Agent Portfolio Scheduler ────────────────────────────────────
+// Check every 5 minutes for portfolios whose next_run_at has passed
+setInterval(() => {
+  runScheduledRebalances(getLLMConfigForUser).catch(() => {})
+}, 5 * 60_000)
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {

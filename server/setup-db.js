@@ -383,6 +383,81 @@ async function setup() {
   `)
   console.log('✅ Table "customer_profiles" ready')
 
+  // ── agent_portfolio_settings ─────────────────────────────────
+  // One row per user — stores the autopilot configuration.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS agent_portfolio_settings (
+      user_id        VARCHAR(50)  PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      cash           NUMERIC(14,2) NOT NULL DEFAULT 0,
+      starting_cash  NUMERIC(14,2) NOT NULL DEFAULT 0,
+      bias           TEXT          NOT NULL DEFAULT '',
+      frequency      VARCHAR(10)   NOT NULL DEFAULT 'weekly'
+                     CHECK (frequency IN ('daily','weekly','monthly')),
+      status         VARCHAR(10)   NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active','paused')),
+      last_run_at    TIMESTAMPTZ,
+      next_run_at    TIMESTAMPTZ,
+      created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    )
+  `)
+  console.log('✅ Table "agent_portfolio_settings" ready')
+
+  // ── agent_holdings ────────────────────────────────────────────
+  // The agent's current stock positions (separate from user's own portfolio).
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS agent_holdings (
+      id         SERIAL       PRIMARY KEY,
+      user_id    VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      symbol     VARCHAR(10)  NOT NULL,
+      shares     NUMERIC(14,6) NOT NULL,
+      avg_cost   NUMERIC(14,4) NOT NULL,
+      updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, symbol)
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_holdings_user ON agent_holdings (user_id)`)
+  console.log('✅ Table "agent_holdings" ready')
+
+  // ── agent_transactions ────────────────────────────────────────
+  // Every trade the agent executes, with its per-trade reasoning.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS agent_transactions (
+      id         SERIAL       PRIMARY KEY,
+      user_id    VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      run_id     INTEGER,
+      symbol     VARCHAR(10)  NOT NULL,
+      side       VARCHAR(4)   NOT NULL CHECK (side IN ('buy','sell')),
+      shares     NUMERIC(14,6) NOT NULL,
+      price      NUMERIC(14,4) NOT NULL,
+      total      NUMERIC(14,2) NOT NULL,
+      reasoning  TEXT,
+      created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_txns_user ON agent_transactions (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_txns_run  ON agent_transactions (run_id)`)
+  console.log('✅ Table "agent_transactions" ready')
+
+  // ── agent_runs ────────────────────────────────────────────────
+  // Log of every rebalance cycle: status, summary, full JSON decisions.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id              SERIAL       PRIMARY KEY,
+      user_id         VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status          VARCHAR(10)  NOT NULL DEFAULT 'success'
+                      CHECK (status IN ('success','error','skipped')),
+      summary         TEXT,
+      decisions       JSONB,
+      trades_count    INTEGER      NOT NULL DEFAULT 0,
+      portfolio_value NUMERIC(14,2),
+      created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_user ON agent_runs (user_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_created ON agent_runs (created_at DESC)`)
+  console.log('✅ Table "agent_runs" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

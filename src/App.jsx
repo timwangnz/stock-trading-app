@@ -24,6 +24,7 @@ import Ideas         from './pages/Ideas'
 import Groups        from './pages/Groups'
 import KnowledgeBase     from './pages/KnowledgeBase'
 import CustomerProfile  from './pages/CustomerProfile'
+import AgentPortfolio   from './pages/AgentPortfolio'
 
 const PAGES = {
   dashboard:       Dashboard,
@@ -38,6 +39,7 @@ const PAGES = {
   groups:          Groups,
   knowledgebase:   KnowledgeBase,
   customerprofile: CustomerProfile,
+  agentportfolio:  AgentPortfolio,
 }
 
 // Read URL params once at module load (before any re-renders strip them)

@@ -5,7 +5,7 @@
  * Teachers see a mode toggle: Teaching ↔ Trading.
  */
 
-import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight, BookOpen } from 'lucide-react'
+import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight, BookOpen, Bot } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
@@ -15,6 +15,7 @@ import clsx from 'clsx'
 const TRADER_NAV = [
   { label: 'Dashboard',        page: 'dashboard',       icon: LayoutDashboard },
   { label: 'Portfolio',        page: 'portfolio',       icon: Briefcase },
+  { label: 'AI Portfolio',     page: 'agentportfolio',  icon: Bot },
   { label: 'History',          page: 'history',         icon: BarChart2 },
   { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
   { label: 'Activity',         page: 'activity',        icon: Activity },
@@ -25,6 +26,7 @@ const TRADER_NAV = [
 const STUDENT_NAV = [
   { label: 'Dashboard',        page: 'dashboard',       icon: LayoutDashboard },
   { label: 'Portfolio',        page: 'portfolio',       icon: Briefcase },
+  { label: 'AI Portfolio',     page: 'agentportfolio',  icon: Bot },
   { label: 'History',          page: 'history',         icon: BarChart2 },
   { label: 'Leaderboard',      page: 'leaderboard',     icon: Trophy },
   { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
