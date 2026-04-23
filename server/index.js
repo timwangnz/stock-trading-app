@@ -1842,13 +1842,13 @@ scheduleNextSnapshot()
 // Ollama is the only provider that doesn't need an API key.
 function getLLMConfigForUser(row) {
   const provider = row?.provider || 'ollama'
-  const model    = row?.model    || 'gemma3'
+  const model    = row?.model    || 'gemma4'
   if (provider === 'ollama') {
     return { provider: 'ollama', model, apiKey: null }
   }
   if (!row?.api_key_enc) {
     // No cloud key — fall back to local Ollama rather than erroring
-    return { provider: 'ollama', model: 'gemma3', apiKey: null }
+    return { provider: 'ollama', model: 'gemma4', apiKey: null }
   }
   return { provider, model, apiKey: decrypt(row.api_key_enc) }
 }

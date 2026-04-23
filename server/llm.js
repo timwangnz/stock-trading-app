@@ -46,7 +46,8 @@ export const PROVIDERS = {
   ollama: {
     label:  'Ollama (Local)',
     models: [
-      { id: 'gemma3',    label: 'Gemma 3 — default'       },
+      { id: 'gemma4',    label: 'Gemma 4 — default'        },
+      { id: 'gemma3',    label: 'Gemma 3'                  },
       { id: 'llama3',    label: 'Llama 3'                  },
       { id: 'mistral',   label: 'Mistral'                  },
       { id: 'qwen2.5',   label: 'Qwen 2.5'                 },
@@ -201,19 +202,40 @@ function extractJsonFromText(text, toolName) {
   return null
 }
 
+/**
+ * Build a prompt suffix that instructs the model to reply with JSON
+ * matching the first tool's input_schema. Used when the model doesn't
+ * support native tool calling (e.g. Gemma3 via Ollama).
+ */
+function buildJsonInstructions(tools) {
+  if (!tools?.length) return ''
+  const tool       = tools[0]
+  const props      = tool.input_schema?.properties ?? {}
+  const propLines  = Object.entries(props)
+    .map(([k, v]) => `  "${k}": ${v.type === 'array' ? '[…]' : `"${v.description ?? v.type}"`}`)
+    .join(',\n')
+
+  return `\n\nYou MUST respond with ONLY a valid JSON object — no explanation, no markdown, no extra text.
+The JSON must match this structure exactly:
+{
+${propLines}
+}
+Do not include any text before or after the JSON object.`
+}
+
 async function callOllama({ model, systemPrompt, userMessage, tools }) {
+  // Gemma3 (and most Ollama models) do not support native tool calling.
+  // Instead, we embed the expected JSON schema in the system prompt and
+  // parse the JSON out of the model's text response.
+  const toolName      = tools?.[0]?.name ?? null
+  const jsonInstructions = tools?.length ? buildJsonInstructions(tools) : ''
+
   const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user',   content: userMessage  },
+    { role: 'system', content: systemPrompt + jsonInstructions },
+    { role: 'user',   content: userMessage },
   ]
 
-  // Ollama uses OpenAI-compatible tool format
-  const body = {
-    model,
-    messages,
-    stream: false,
-    tools:  tools ? toOpenAITools(tools) : undefined,
-  }
+  const body = { model, messages, stream: false }
 
   let res
   try {
@@ -228,21 +250,11 @@ async function callOllama({ model, systemPrompt, userMessage, tools }) {
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
   const data = await res.json()
 
-  const msg      = data.message ?? {}
-  const toolCall = msg.tool_calls?.[0]
+  const text = data.message?.content ?? null
 
-  // ── Tool call returned ────────────────────────────────────────
-  if (toolCall) {
-    const args = typeof toolCall.function.arguments === 'string'
-      ? JSON.parse(toolCall.function.arguments)
-      : toolCall.function.arguments
-    return { text: null, toolName: toolCall.function.name, toolInput: args }
-  }
-
-  // ── No tool call — try to extract JSON from text (fallback) ───
-  const text = msg.content ?? null
-  if (tools?.length && text) {
-    const fallback = extractJsonFromText(text, tools[0].name)
+  // Try to extract structured JSON from the text response
+  if (toolName && text) {
+    const fallback = extractJsonFromText(text, toolName)
     if (fallback) return fallback
   }
 
