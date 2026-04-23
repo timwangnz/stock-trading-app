@@ -138,7 +138,7 @@ RECENT NEWS:
 ${newsBlock || '  (no news available)'}
 
 RULES:
-- Return 3–8 stock positions that best match the user's bias
+- Return exactly ${settings.num_stocks ?? 10} stock positions that best match the user's bias (no more, no less unless cash is truly insufficient for more)
 - targetPct values must sum to ≤ 95 (always keep ≥ 5% cash buffer)
 - For estimatedPrice: use the live price if shown above, otherwise use your best knowledge of the current share price
 - You MUST include estimatedPrice for every decision — it is required for trade execution

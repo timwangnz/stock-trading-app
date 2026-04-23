@@ -1865,7 +1865,7 @@ app.get('/api/agent-portfolio', authMiddleware, async (req, res) => {
 
 // POST /api/agent-portfolio/setup  — create or replace the agent portfolio
 app.post('/api/agent-portfolio/setup', authMiddleware, async (req, res) => {
-  const { startingCash, bias, frequency } = req.body
+  const { startingCash, bias, frequency, numStocks } = req.body
   if (!startingCash || !bias?.trim() || !frequency) {
     return res.status(400).json({ error: 'startingCash, bias, and frequency are required' })
   }
@@ -1876,15 +1876,16 @@ app.post('/api/agent-portfolio/setup', authMiddleware, async (req, res) => {
   if (isNaN(cash) || cash < 100) {
     return res.status(400).json({ error: 'startingCash must be at least $100' })
   }
+  const stocks = Math.min(Math.max(parseInt(numStocks ?? 10, 10), 1), 20)
   try {
     const nextRun = calcNextRun(frequency)
     await pool.query(
-      `INSERT INTO agent_portfolio_settings (user_id, cash, starting_cash, bias, frequency, next_run_at)
-       VALUES ($1,$2,$2,$3,$4,$5)
+      `INSERT INTO agent_portfolio_settings (user_id, cash, starting_cash, bias, frequency, num_stocks, next_run_at)
+       VALUES ($1,$2,$2,$3,$4,$5,$6)
        ON CONFLICT (user_id) DO UPDATE
          SET cash=$2, starting_cash=$2, bias=$3, frequency=$4,
-             next_run_at=$5, status='active', updated_at=NOW()`,
-      [req.user.id, cash, bias.trim(), frequency, nextRun]
+             num_stocks=$5, next_run_at=$6, status='active', updated_at=NOW()`,
+      [req.user.id, cash, bias.trim(), frequency, stocks, nextRun]
     )
     // Clear any old holdings & runs for a fresh start
     await pool.query('DELETE FROM agent_holdings     WHERE user_id=$1', [req.user.id])
@@ -1896,15 +1897,16 @@ app.post('/api/agent-portfolio/setup', authMiddleware, async (req, res) => {
   }
 })
 
-// PATCH /api/agent-portfolio/settings  — update bias/frequency/status without resetting
+// PATCH /api/agent-portfolio/settings  — update bias/frequency/status/numStocks without resetting
 app.patch('/api/agent-portfolio/settings', authMiddleware, async (req, res) => {
-  const { bias, frequency, status } = req.body
+  const { bias, frequency, status, numStocks } = req.body
   try {
     const updates = []
     const vals    = []
-    if (bias?.trim())  { updates.push(`bias=$${updates.length+1}`)      ; vals.push(bias.trim()) }
-    if (frequency)     { updates.push(`frequency=$${updates.length+1}`) ; vals.push(frequency)   }
-    if (status)        { updates.push(`status=$${updates.length+1}`)    ; vals.push(status)      }
+    if (bias?.trim())         { updates.push(`bias=$${updates.length+1}`)       ; vals.push(bias.trim()) }
+    if (frequency)            { updates.push(`frequency=$${updates.length+1}`)  ; vals.push(frequency)   }
+    if (status)               { updates.push(`status=$${updates.length+1}`)     ; vals.push(status)      }
+    if (numStocks != null)    { updates.push(`num_stocks=$${updates.length+1}`) ; vals.push(Math.min(Math.max(parseInt(numStocks, 10), 1), 20)) }
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' })
     updates.push('updated_at=NOW()')
     vals.push(req.user.id)

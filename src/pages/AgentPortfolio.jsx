@@ -58,6 +58,7 @@ function SetupWizard({ onSetup }) {
   const [cash,      setCash]      = useState('10000')
   const [bias,      setBias]      = useState('')
   const [frequency, setFrequency] = useState('weekly')
+  const [numStocks, setNumStocks] = useState(10)
   const [loading,   setLoading]   = useState(false)
   const [error,     setError]     = useState(null)
 
@@ -68,7 +69,7 @@ function SetupWizard({ onSetup }) {
     try {
       await API('/setup', {
         method: 'POST',
-        body: JSON.stringify({ startingCash: parseFloat(cash), bias, frequency }),
+        body: JSON.stringify({ startingCash: parseFloat(cash), bias, frequency, numStocks }),
       })
       onSetup()
     } catch (err) {
@@ -133,6 +134,21 @@ function SetupWizard({ onSetup }) {
                 {ex}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Number of stocks */}
+        <div>
+          <label className="block text-primary text-sm font-medium mb-1.5">Number of Stocks</label>
+          <div className="flex items-center gap-3">
+            <button type="button"
+              onClick={() => setNumStocks(v => Math.max(1, v - 1))}
+              className="w-9 h-9 rounded-lg border border-border bg-surface-hover text-primary text-lg font-medium hover:bg-border transition-colors flex items-center justify-center">−</button>
+            <span className="text-primary font-semibold text-lg w-8 text-center">{numStocks}</span>
+            <button type="button"
+              onClick={() => setNumStocks(v => Math.min(20, v + 1))}
+              className="w-9 h-9 rounded-lg border border-border bg-surface-hover text-primary text-lg font-medium hover:bg-border transition-colors flex items-center justify-center">+</button>
+            <p className="text-faint text-xs ml-1">How many different stocks the agent can hold (1–20)</p>
           </div>
         </div>
 
@@ -268,6 +284,7 @@ function RunCard({ run }) {
 function SettingsPanel({ settings, onSaved, onReset }) {
   const [bias,      setBias]      = useState(settings.bias)
   const [frequency, setFrequency] = useState(settings.frequency)
+  const [numStocks, setNumStocks] = useState(settings.num_stocks ?? 10)
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState(null)
   const [resetting, setResetting] = useState(false)
@@ -275,7 +292,7 @@ function SettingsPanel({ settings, onSaved, onReset }) {
   const handleSave = async () => {
     setSaving(true); setError(null)
     try {
-      await API('/settings', { method: 'PATCH', body: JSON.stringify({ bias, frequency }) })
+      await API('/settings', { method: 'PATCH', body: JSON.stringify({ bias, frequency, numStocks }) })
       onSaved()
     } catch (err) { setError(err.message) }
     finally { setSaving(false) }
@@ -320,6 +337,20 @@ function SettingsPanel({ settings, onSaved, onReset }) {
                 frequency === f ? 'border-accent-blue/50 bg-accent-blue/10 text-accent-blue' : 'border-border bg-surface-hover text-muted hover:text-primary'
               )}>{f}</button>
           ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-muted text-xs mb-1.5">Number of Stocks</label>
+        <div className="flex items-center gap-3">
+          <button type="button"
+            onClick={() => setNumStocks(v => Math.max(1, v - 1))}
+            className="w-8 h-8 rounded-lg border border-border bg-surface-hover text-primary font-medium hover:bg-border transition-colors flex items-center justify-center text-base">−</button>
+          <span className="text-primary font-semibold w-6 text-center">{numStocks}</span>
+          <button type="button"
+            onClick={() => setNumStocks(v => Math.min(20, v + 1))}
+            className="w-8 h-8 rounded-lg border border-border bg-surface-hover text-primary font-medium hover:bg-border transition-colors flex items-center justify-center text-base">+</button>
+          <p className="text-faint text-xs ml-1">stocks (1–20)</p>
         </div>
       </div>
 
@@ -478,8 +509,11 @@ function Dashboard({ state, onRefresh }) {
       {/* Bias display */}
       <div className="bg-surface-card border border-border rounded-xl px-5 py-4 flex items-start gap-3">
         <Sparkles size={14} className="text-accent-blue shrink-0 mt-0.5" />
-        <div>
-          <p className="text-faint text-xs mb-1">Active strategy</p>
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-faint text-xs">Active strategy</p>
+            <span className="text-faint text-xs">{settings.num_stocks ?? 10} stocks · {settings.frequency}</span>
+          </div>
           <p className="text-secondary text-sm leading-relaxed">"{settings.bias}"</p>
         </div>
       </div>

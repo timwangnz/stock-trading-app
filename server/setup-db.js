@@ -393,6 +393,7 @@ async function setup() {
       bias           TEXT          NOT NULL DEFAULT '',
       frequency      VARCHAR(10)   NOT NULL DEFAULT 'weekly'
                      CHECK (frequency IN ('daily','weekly','monthly')),
+      num_stocks     INTEGER       NOT NULL DEFAULT 10,
       status         VARCHAR(10)   NOT NULL DEFAULT 'active'
                      CHECK (status IN ('active','paused')),
       last_run_at    TIMESTAMPTZ,
@@ -401,6 +402,11 @@ async function setup() {
       updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     )
   `)
+  // Migration: add num_stocks to existing tables that pre-date this column
+  await client.query(`
+    ALTER TABLE agent_portfolio_settings
+      ADD COLUMN IF NOT EXISTS num_stocks INTEGER NOT NULL DEFAULT 10
+  `).catch(() => {})
   console.log('✅ Table "agent_portfolio_settings" ready')
 
   // ── agent_holdings ────────────────────────────────────────────
