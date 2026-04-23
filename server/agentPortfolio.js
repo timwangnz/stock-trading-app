@@ -146,16 +146,26 @@ RULES:
 - Write a 2–3 sentence summary of your strategy this cycle
 - This is vibe (simulated) trading only — not real financial advice`
 
-  const { toolInput } = await callLLM(
-    {
-      provider: llmConfig.provider || 'anthropic',
-      model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
-      apiKey:   llmConfig.apiKey   || null,
-    },
+  const provider = llmConfig.provider || 'anthropic'
+  const model    = llmConfig.model    || 'claude-haiku-4-5-20251001'
+  console.log(`[agent] Calling LLM  provider=${provider}  model=${model}`)
+
+  const raw = await callLLM(
+    { provider, model, apiKey: llmConfig.apiKey || null },
     { systemPrompt, userMessage: 'Please rebalance the portfolio now.', tools: [REBALANCE_TOOL] }
   )
 
-  return toolInput   // { decisions: [...], summary: '...' }
+  console.log(`[agent] LLM raw response  toolName=${raw.toolName}  hasToolInput=${!!raw.toolInput}  textLen=${raw.text?.length ?? 0}`)
+  if (raw.toolInput) {
+    const d = raw.toolInput.decisions ?? []
+    console.log(`[agent] LLM decisions (${d.length}):`)
+    d.forEach(dec => console.log(`  ${dec.symbol}  ${dec.targetPct}%  estimatedPrice=${dec.estimatedPrice ?? 'MISSING'}`))
+    if (!raw.toolInput.summary) console.warn('[agent] WARNING: LLM returned no summary')
+  } else {
+    console.warn('[agent] WARNING: LLM returned no toolInput — raw text:', raw.text?.slice(0, 400))
+  }
+
+  return raw.toolInput   // { decisions: [...], summary: '...' }
 }
 
 // ── Trade execution ───────────────────────────────────────────────
@@ -177,10 +187,15 @@ async function executeAgentTrades({ userId, runId, holdings, prices, decisions, 
   }, 0) + cash
   const targetMap  = {}
   for (const d of decisions) {
-    const price = prices[d.symbol] || d.estimatedPrice   // ← fallback to LLM estimate
-    if (!price) continue
+    const livePrice = prices[d.symbol]
+    const price     = livePrice || d.estimatedPrice   // ← fallback to LLM estimate
+    if (!price) {
+      console.warn(`[agent] SKIP ${d.symbol}: no live price and no estimatedPrice from LLM`)
+      continue
+    }
     const targetValue = totalValue * (d.targetPct / 100)
     targetMap[d.symbol] = { targetShares: targetValue / price, price, reasoning: d.reasoning }
+    console.log(`[agent] target ${d.symbol}  ${d.targetPct}%  price=$${price}${livePrice ? ' (live)' : ' (est)'}  targetShares=${(targetValue/price).toFixed(4)}`)
   }
 
   // ── SELLS first (frees cash for buys) ────────────────────────
@@ -289,6 +304,7 @@ async function upsertHolding(client, userId, symbol, addShares, price, existingS
  * @returns {{ summary, tradesCount, portfolioValue, error? }}
  */
 export async function runRebalance(userId, llmConfig = {}) {
+  const tag    = `[agent user=${userId}]`
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -304,6 +320,7 @@ export async function runRebalance(userId, llmConfig = {}) {
     const { rows: holdings } = await client.query(
       'SELECT symbol, shares, avg_cost FROM agent_holdings WHERE user_id=$1', [userId]
     )
+    console.log(`${tag} Starting rebalance — holdings=${holdings.length}  cash=$${settings.cash}  freq=${settings.frequency}  stocks=${settings.num_stocks ?? 10}`)
 
     // Build symbol list: holdings + a sample from universe
     const heldSymbols   = holdings.map(h => h.symbol)
@@ -315,10 +332,14 @@ export async function runRebalance(userId, llmConfig = {}) {
       getLivePrices(allSymbols),
       getNewsHeadlines(heldSymbols.length ? heldSymbols : UNIVERSE.slice(0, 5)),
     ])
+    const livePriceCount = Object.keys(prices).length
+    console.log(`${tag} Prices fetched: ${livePriceCount}/${allSymbols.length} live  (POLYGON_API_KEY ${process.env.POLYGON_API_KEY ? 'set' : 'NOT SET — will use LLM estimates'})`)
+    if (livePriceCount === 0) console.warn(`${tag} No live prices — all trades will use LLM estimatedPrice as fallback`)
 
     // Total portfolio value
     const holdingsValue = holdings.reduce((s, h) => s + (prices[h.symbol] ?? 0) * parseFloat(h.shares), 0)
     const totalValue    = holdingsValue + parseFloat(settings.cash)
+    console.log(`${tag} Portfolio value: $${totalValue.toFixed(2)}  (holdings $${holdingsValue.toFixed(2)} + cash $${settings.cash})`)
 
     // Get LLM target allocation
     const llmResult = await getLLMDecisions({
@@ -332,6 +353,11 @@ export async function runRebalance(userId, llmConfig = {}) {
       priceSource: prices[d.symbol] ? 'live' : 'estimated',
     }))
 
+    const missingEstimates = llmResult.decisions.filter(d => !prices[d.symbol] && !d.estimatedPrice)
+    if (missingEstimates.length) {
+      console.warn(`${tag} WARNING: ${missingEstimates.length} decisions missing estimatedPrice — those will be skipped:`, missingEstimates.map(d => d.symbol))
+    }
+
     // Create the run record (need the id for transaction foreign keys)
     const { rows: [run] } = await client.query(
       `INSERT INTO agent_runs (user_id, status, summary, decisions, trades_count, portfolio_value)
@@ -344,6 +370,9 @@ export async function runRebalance(userId, llmConfig = {}) {
       userId, runId: run.id, holdings, prices,
       decisions: llmResult.decisions, settings, client,
     })
+
+    console.log(`${tag} Rebalance complete — ${tradesLog.length} trades executed:`)
+    tradesLog.forEach(t => console.log(`  ${t.action.toUpperCase()}  ${t.symbol}  ${Number(t.shares).toFixed(4)} @ $${Number(t.price).toFixed(2)}`))
 
     // Update run with actual trade count
     await client.query(
@@ -365,7 +394,8 @@ export async function runRebalance(userId, llmConfig = {}) {
 
   } catch (err) {
     await client.query('ROLLBACK')
-    // Log failed run
+    console.error(`${tag} Rebalance FAILED:`, err.message)
+    // Log failed run with full error detail
     try {
       await pool.query(
         `INSERT INTO agent_runs (user_id, status, summary) VALUES ($1,'error',$2)`,
