@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import { Trash2, PlusCircle, TrendingUp, DollarSign, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown, Pencil, BadgeDollarSign } from 'lucide-react'
+import { Trash2, PlusCircle, TrendingUp, DollarSign, RefreshCw, ShoppingCart, MinusCircle, Lock, ChevronRight, ChevronDown, Pencil, BadgeDollarSign, ChevronsUpDown, ChevronUp } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
@@ -467,6 +467,19 @@ export default function Portfolio() {
   const [addCashAmount, setAddCashAmount] = useState('')
   const [addCashError,  setAddCashError]  = useState('')
   const [addCashLoading, setAddCashLoading] = useState(false)
+  // Sort state for the holdings table
+  const [sortKey, setSortKey] = useState('value')
+  const [sortDir, setSortDir] = useState('desc')
+
+  const cycleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortKey(key)
+      setSortDir('desc')
+    }
+  }
+
   // activePanel: { symbol, mode: 'buy'|'sell'|'edit', prefillShares?: number } or null
   const [activePanel,      setActivePanel]      = useState(null)
   // expandedSymbols: Set of symbols whose lot rows are visible
@@ -538,6 +551,26 @@ export default function Portfolio() {
       return { ...holding, ...meta, price, changePct, value, cost, gain, gainPct, colorIndex: i }
     })
   }, [state.portfolio, prices])
+
+  const sortedHoldings = useMemo(() => {
+    const sorted = [...holdings].sort((a, b) => {
+      let av, bv
+      switch (sortKey) {
+        case 'symbol':   av = a.symbol;    bv = b.symbol;    break
+        case 'shares':   av = a.shares;    bv = b.shares;    break
+        case 'avgCost':  av = a.avgCost;   bv = b.avgCost;   break
+        case 'price':    av = a.price;     bv = b.price;     break
+        case 'changePct':av = a.changePct; bv = b.changePct; break
+        case 'gain':     av = a.gain;      bv = b.gain;      break
+        case 'gainPct':  av = a.gainPct;   bv = b.gainPct;   break
+        default:         av = a.value;     bv = b.value;     break
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ?  1 : -1
+      return 0
+    })
+    return sorted
+  }, [holdings, sortKey, sortDir])
 
   const holdingsValue = holdings.reduce((s, h) => s + h.value, 0)
   const totalValue    = holdingsValue + (cash ?? 0)
@@ -737,20 +770,47 @@ export default function Portfolio() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-muted text-xs">
+              <tr className="text-muted text-xs border-b border-border">
                 <th className="w-6 px-2 py-3"></th>
-                <th className="text-left px-3 py-3 font-medium">Symbol</th>
-                <th className="text-right px-5 py-3 font-medium">Shares</th>
-                <th className="text-right px-5 py-3 font-medium">Avg Cost</th>
-                <th className="text-right px-5 py-3 font-medium">Current (Live)</th>
-                <th className="text-right px-5 py-3 font-medium">Today</th>
-                <th className="text-right px-5 py-3 font-medium">Value</th>
-                <th className="text-right px-5 py-3 font-medium">Gain / Loss</th>
+                {[
+                  { key: 'symbol',    label: 'Symbol',        align: 'left'  },
+                  { key: 'shares',    label: 'Shares',        align: 'right' },
+                  { key: 'avgCost',   label: 'Avg Cost',      align: 'right' },
+                  { key: 'price',     label: 'Current (Live)',align: 'right' },
+                  { key: 'changePct', label: 'Today',         align: 'right' },
+                  { key: 'value',     label: 'Value',         align: 'right' },
+                  { key: 'gain',      label: 'Gain / Loss',   align: 'right' },
+                ].map(({ key, label, align }) => {
+                  const active = sortKey === key
+                  return (
+                    <th
+                      key={key}
+                      onClick={() => cycleSort(key)}
+                      className={clsx(
+                        'px-5 py-3 font-medium cursor-pointer select-none hover:text-primary transition-colors',
+                        align === 'left' ? 'text-left px-3' : 'text-right',
+                        active && 'text-primary'
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-1 justify-end w-full">
+                        {align === 'left' && active && (
+                          sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                        )}
+                        {label}
+                        {align !== 'left' && (
+                          active
+                            ? (sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)
+                            : <ChevronsUpDown size={11} className="opacity-30" />
+                        )}
+                      </span>
+                    </th>
+                  )
+                })}
                 <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {holdings.map(h => {
+              {sortedHoldings.map(h => {
                 const panelOpen  = activePanel?.symbol === h.symbol
                 const panelMode  = activePanel?.mode
                 const isExpanded = expandedSymbols.has(h.symbol)
