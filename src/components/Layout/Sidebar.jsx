@@ -42,7 +42,7 @@ const TEACHER_NAV = [
   { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ open, onClose }) {
   const { state, dispatch }                       = useApp()
   const { isAdmin, isTeacher, isStudent, role, viewMode, toggleViewMode } = useAuth()
 
@@ -59,7 +59,23 @@ export default function Sidebar() {
   const navItems = inTeacherMode ? TEACHER_NAV : isStudent ? STUDENT_NAV : TRADER_NAV
 
   return (
-    <aside className="w-56 h-full bg-surface-card border-r border-border flex flex-col overflow-y-auto">
+    <>
+      {/* Mobile backdrop */}
+      {open && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 md:hidden"
+          onClick={onClose}
+        />
+      )}
+
+    <aside className={clsx(
+      'flex flex-col overflow-y-auto bg-surface-card border-r border-border',
+      // Mobile: fixed overlay, slides in/out
+      'fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-200',
+      open ? 'translate-x-0' : '-translate-x-full',
+      // Desktop: static, always visible
+      'md:static md:w-56 md:h-full md:translate-x-0 md:z-auto',
+    )}>
       {/* Logo */}
       <div className="px-6 py-5 border-b border-border">
         <div className="flex items-center gap-2">
@@ -211,5 +227,6 @@ export default function Sidebar() {
         </p>
       </div>
     </aside>
+    </>
   )
 }

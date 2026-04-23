@@ -147,10 +147,10 @@ function PortfolioSummary({ onNavigate }) {
       {loading ? (
         <p className="text-muted text-xs py-2">Loading prices…</p>
       ) : (
-        <div className="flex gap-6 items-start">
+        <div className="flex flex-col sm:flex-row gap-6 items-start">
 
           {/* ── Left: key numbers ─────────────────── */}
-          <div className="space-y-3 min-w-0 shrink-0">
+          <div className="space-y-3 min-w-0 shrink-0 w-full sm:w-auto">
             <div>
               <p className="text-muted text-xs mb-0.5">Total Value</p>
               <p className="text-primary font-bold text-2xl">
@@ -175,7 +175,7 @@ function PortfolioSummary({ onNavigate }) {
           </div>
 
           {/* ── Divider ───────────────────────────── */}
-          <div className="w-px self-stretch bg-surface-hover mx-2 shrink-0" />
+          <div className="hidden sm:block w-px self-stretch bg-surface-hover mx-2 shrink-0" />
 
           {/* ── Right: holdings pie chart ─────────── */}
           <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -288,7 +288,7 @@ export default function Dashboard() {
   if (error)                     return <ErrorMessage error={error} />
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
 
       {/* ── Portfolio summary (hidden if portfolio is empty) ── */}
       <PortfolioSummary onNavigate={(page) => dispatch({ type: ACTIONS.NAVIGATE, payload: page })} />
@@ -325,7 +325,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="flex gap-3">
+        <div className="grid grid-cols-2 sm:flex gap-3">
           <StatBadge label="Tracking" value={`${stocks.length} stocks`} />
           <StatBadge label="Advancing" value={gainers} trend="up" />
           <StatBadge label="Declining" value={losers}  trend="down" />

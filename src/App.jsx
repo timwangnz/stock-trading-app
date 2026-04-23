@@ -50,6 +50,7 @@ export default function App() {
   const { user, loading, isAdmin } = useAuth()
   const { state, dispatch }        = useApp()
   const [agentOpen, setAgentOpen]   = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [resetToken, setResetToken] = useState(RESET_TOKEN)
   const [joinToken, setJoinToken]   = useState(JOIN_TOKEN)
   const [joinMsg,   setJoinMsg]     = useState(null)
@@ -87,13 +88,19 @@ export default function App() {
   const resolvedPage  = requestedPage === 'admin' && !isAdmin ? 'dashboard' : requestedPage
   const PageComponent = PAGES[resolvedPage] ?? Dashboard
 
+  // Close sidebar when navigating (mobile UX)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [state.currentPage])
+
   return (
     <div className="flex h-screen overflow-hidden bg-surface">
-      <Sidebar className="h-full overflow-y-auto" />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header
           agentOpen={agentOpen}
           onToggleAgent={() => setAgentOpen(v => !v)}
+          onMenuClick={() => setSidebarOpen(v => !v)}
         />
         {joinMsg && (
           <div className="mx-4 mt-3 px-4 py-3 rounded-xl bg-gain/10 border border-gain/30 text-gain text-sm flex items-center justify-between">

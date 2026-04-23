@@ -213,7 +213,7 @@ function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
       <h3 className="text-primary text-sm font-semibold">
         {canManualPrice ? 'Add Holding' : 'Buy at Market Price'}
       </h3>
-      <div className={clsx('grid gap-2', canManualPrice ? 'grid-cols-3' : 'grid-cols-2')}>
+      <div className={clsx('grid gap-2', canManualPrice ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2')}>
         <StockSearch value={symbol} onChange={setSymbol} placeholder="Search any stock…" />
         <input
           type="number" min="0.001" step="any" placeholder="Shares"
@@ -590,7 +590,7 @@ export default function Portfolio() {
   if (error)   return <ErrorMessage error={error} />
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
 
       {/* ── Summary cards ────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -768,7 +768,8 @@ export default function Portfolio() {
         {holdings.length === 0 ? (
           <div className="px-5 py-12 text-center text-muted text-sm">No holdings yet. Click "Add Holding" to get started.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead>
               <tr className="text-muted text-xs border-b border-border">
                 <th className="w-6 px-2 py-3"></th>
@@ -1091,6 +1092,7 @@ export default function Portfolio() {
               )}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
