@@ -375,8 +375,16 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
   // Collect MCP tool definitions (already in Anthropic format, with _mcp* meta)
   const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
 
+  // Build an explicit MCP tools section listing each tool by name
   const mcpSection = mcpToolDefs.length > 0
-    ? `\n\nYou also have access to ${mcpToolDefs.length} external tool(s) from connected MCP servers. Use them when they can enrich your answer (e.g. web search for latest news, custom data sources). After calling an MCP tool you will receive its result and can then answer the user.`
+    ? `\n\nCONNECTED EXTERNAL TOOLS (MCP):
+You have real-time tool access via the following MCP tools. You MUST call them instead of saying you lack real-time data:
+${mcpToolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+
+Rules for MCP tool use:
+- If the user asks for news, search results, or any current/live information → call the appropriate search tool immediately
+- NEVER say "I don't have access to real-time data" — you DO, via the tools above
+- After receiving a tool result, summarise it concisely for the user`
     : ''
 
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.

@@ -889,22 +889,12 @@ app.post('/api/agent/trade',
     const { message, portfolio } = req.body
     if (!message?.trim()) return res.status(400).json({ error: 'Message is required' })
     try {
-      // Load the user's LLM settings (provider, model, decrypted API key)
+      // Load the user's LLM settings — falls back to local Ollama if no cloud key is set
       const { rows: [settings] } = await pool.query(
         'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id = $1',
         [req.user.id]
       )
-      if (!settings?.api_key_enc) {
-        return res.status(400).json({
-          error: 'No API key configured. Please open the Trading Agent settings (⚙️) and add your API key before using the agent.',
-        })
-      }
-
-      const llmConfig = {
-        provider: settings.provider || 'anthropic',
-        model:    settings.model    || 'claude-haiku-4-5-20251001',
-        apiKey:   decrypt(settings.api_key_enc),
-      }
+      const llmConfig = getLLMConfigForUser(settings ?? {})
 
       // Load enabled MCP servers and their tools for this user
       const { rows: mcpRows } = await pool.query(

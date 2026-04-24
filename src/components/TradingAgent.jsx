@@ -1,27 +1,14 @@
 /**
  * TradingAgent.jsx
- * Natural-language trading assistant — supports two backends:
- *
- *  1. LOCAL MODE  (default) — streams responses from a local Ollama model
- *                             (e.g. gemma3) via http://localhost:11434.
- *                             Portfolio data is injected into the system prompt
- *                             so the model knows your holdings.
- *
- *  2. CLOUD MODE  (fallback) — posts to POST /api/agent/trade, which calls
- *                              Claude with tool_use and can execute real vibe
- *                              trades in MySQL.
- *
- * Users can toggle between modes with the 🖥 / ☁ button in the header.
+ * Natural-language trading assistant — always routes through the server.
+ * The server picks the right LLM (Anthropic, OpenAI, Gemini, or local Ollama)
+ * based on the user's settings, and handles MCP tool calls.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Bot, Send, TrendingUp, TrendingDown, Trash2, Sparkles,
-         ChevronDown, ChevronUp, Cpu, Cloud, Newspaper, ExternalLink, Zap } from 'lucide-react'
+         ChevronDown, ChevronUp, Newspaper, ExternalLink, Zap } from 'lucide-react'
 import clsx from 'clsx'
-import { streamOllamaChat, isOllamaAvailable } from '../services/ollama'
-import { buildMarketContext } from '../services/marketContext'
-
-const OLLAMA_MODEL = 'gemma3'   // change to 'gemma:2b', 'mistral', etc. if needed
 
 // ── Types ────────────────────────────────────────────────────────
 // embedded={true}  → fills the parent panel, no collapsible header
@@ -243,64 +230,21 @@ const SUGGESTIONS = [
   'How is my portfolio doing?',
 ]
 
-// ── Build Ollama system prompt from portfolio + optional live data ─
-function buildSystemPrompt(portfolio, liveDataBlock = null) {
-  const holdings = portfolio?.length
-    ? portfolio.map(h =>
-        `  • ${h.symbol}: ${h.shares} shares @ avg $${Number(h.avgCost ?? 0).toFixed(2)}, current value $${Number(h.value ?? 0).toFixed(2)}`
-      ).join('\n')
-    : '  (no holdings yet)'
-
-  const liveSection = liveDataBlock
-    ? `\n\n${liveDataBlock}\n\nIMPORTANT: Use the live market data above when answering. Quote exact prices and changes.`
-    : ''
-
-  return `You are a helpful AI trading assistant for a vibe-trading app called TradeBuddy.
-The user's current portfolio is:
-${holdings}
-${liveSection}
-Guidelines:
-- Answer questions about the portfolio using the data above.
-- When live market data is provided, always use those exact numbers in your response.
-- You can discuss trading strategies, market concepts, and general financial education.
-- If asked to execute a trade (buy/sell), explain that in local mode you can only give advice —
-  they can switch to Cloud mode (☁ button) to execute real vibe trades.
-- Keep responses concise and friendly. Use bullet points for lists.
-- This is vibe trading only. Always remind users this is not financial advice.`
-}
-
 // ── Main component ───────────────────────────────────────────────
 export default function TradingAgent({ portfolio, onTradeExecuted, embedded = false }) {
-  const [open,      setOpen]      = useState(false)
-  const [input,     setInput]     = useState('')
-  const [useOllama, setUseOllama] = useState(true)   // true = local Gemma, false = cloud Claude
-  const [ollamaOk,  setOllamaOk]  = useState(null)   // null=checking, true/false
-  const [messages,  setMessages]  = useState([
+  const [open,     setOpen]     = useState(false)
+  const [input,    setInput]    = useState('')
+  const [messages, setMessages] = useState([
     {
       id:   'welcome',
       role: 'agent',
-      text: "Hi! I'm your trading assistant powered by Gemma (local). Ask me about your portfolio or any trading questions.",
+      text: "Hi! I'm your trading assistant. Ask me about your portfolio or any trading questions.",
       trade: null,
     },
   ])
-  const [loading,  setLoading]  = useState(false)
-  const bottomRef  = useRef(null)
-  const inputRef   = useRef(null)
-  const abortRef   = useRef(null)
-
-  // Check Ollama availability on mount
-  useEffect(() => {
-    isOllamaAvailable().then(ok => {
-      setOllamaOk(ok)
-      if (!ok) {
-        setUseOllama(false)
-        setMessages(prev => [{
-          ...prev[0],
-          text: "Hi! Ollama isn't running locally, so I'm using Cloud mode (Claude). You can start Ollama anytime and switch back.",
-        }])
-      }
-    })
-  }, [])
+  const [loading, setLoading] = useState(false)
+  const bottomRef = useRef(null)
+  const inputRef  = useRef(null)
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -312,20 +256,6 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
     if (open) setTimeout(() => inputRef.current?.focus(), 100)
   }, [open])
 
-  // Build conversation history for Ollama (all prior messages)
-  const buildOllamaMessages = useCallback((history, newUserMsg, liveDataBlock = null) => {
-    const systemPrompt = buildSystemPrompt(portfolio, liveDataBlock)
-    const chatHistory  = history
-      .filter(m => m.id !== 'welcome' && !m.error)
-      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }))
-
-    return [
-      { role: 'system',    content: systemPrompt },
-      ...chatHistory,
-      { role: 'user',      content: newUserMsg },
-    ]
-  }, [portfolio])
-
   const send = async (text) => {
     const msg = text ?? input.trim()
     if (!msg || loading) return
@@ -335,55 +265,6 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
     setMessages(prev => [...prev, userMsg])
     setLoading(true)
 
-    // ── LOCAL MODE: Ollama / Gemma ──────────────────────────────
-    if (useOllama) {
-      // 1. Fetch live market data if the message seems to need it
-      let liveDataBlock = null
-      let tickersFetched = []
-      try {
-        const result = await buildMarketContext(msg, portfolio)
-        liveDataBlock  = result.contextBlock
-        tickersFetched = result.tickersFetched
-      } catch {
-        // non-fatal — proceed without live data
-      }
-
-      // 2. Add a placeholder bubble (streams into it)
-      const agentId = Date.now() + 1
-      setMessages(prev => [...prev, {
-        id:    agentId,
-        role:  'agent',
-        text:  '',
-        trade: null,
-        // show a small badge if we fetched real data
-        fetchedTickers: tickersFetched,
-      }])
-
-      abortRef.current = new AbortController()
-
-      await streamOllamaChat({
-        model:    OLLAMA_MODEL,
-        messages: buildOllamaMessages(messages, msg, liveDataBlock),
-        signal:   abortRef.current.signal,
-        onToken: (chunk) => {
-          setMessages(prev => prev.map(m =>
-            m.id === agentId ? { ...m, text: m.text + chunk } : m
-          ))
-        },
-        onError: (err) => {
-          setMessages(prev => prev.map(m =>
-            m.id === agentId
-              ? { ...m, text: `Ollama error: ${err.message}. Is Ollama running with "${OLLAMA_MODEL}" pulled?`, error: true }
-              : m
-          ))
-        },
-      })
-
-      setLoading(false)
-      return
-    }
-
-    // ── CLOUD MODE: backend → Claude ────────────────────────────
     try {
       const token = localStorage.getItem('tradebuddy_token')
       const res   = await fetch('/api/agent/trade', {
@@ -441,56 +322,15 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
     }
   }
 
-  // Toggle between local Ollama and cloud Claude
-  const toggleMode = () => {
-    if (loading) { abortRef.current?.abort(); setLoading(false) }
-    const next = !useOllama
-    setUseOllama(next)
-    setMessages([{
-      id:   'welcome',
-      role: 'agent',
-      text: next
-        ? "Switched to 🖥 Local mode (Gemma via Ollama). Ask me anything about your portfolio!"
-        : "Switched to ☁ Cloud mode (Claude). I can execute vibe trades too!",
-      trade: null,
-    }])
-  }
-
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
-
-  // ── Mode badge (shown in message list header) ───────────────────
-  const ModeBadge = () => (
-    <button
-      onClick={toggleMode}
-      title={useOllama ? 'Using local Gemma — click to switch to Cloud (Claude)' : 'Using Cloud (Claude) — click to switch to local Gemma'}
-      className={clsx(
-        'inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors',
-        useOllama
-          ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/20'
-          : 'text-accent-blue bg-accent-blue/10 border-accent-blue/20 hover:bg-accent-blue/20',
-        ollamaOk === false && useOllama === false ? 'opacity-50 cursor-default' : 'cursor-pointer'
-      )}
-    >
-      {useOllama ? <Cpu size={10} /> : <Cloud size={10} />}
-      {useOllama ? `Local · ${OLLAMA_MODEL}` : 'Cloud · Claude'}
-    </button>
-  )
 
   // In embedded mode the panel provides its own header/close button.
   // We render just the inner content, filling the available height.
   if (embedded) {
     return (
       <div className="flex flex-col h-full">
-        {/* Mode toggle bar */}
-        <div className="px-4 pt-2 pb-1 flex items-center gap-2">
-          <ModeBadge />
-          {ollamaOk === false && (
-            <span className="text-xs text-faint">Ollama not detected</span>
-          )}
-        </div>
-
         {/* Message list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {messages.map(m => (
@@ -571,15 +411,13 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
               <Send size={15} />
             </button>
           </div>
-          <p className="text-faint text-xs mt-1.5 px-1">
-            {useOllama ? `Gemma (local) · vibe trading only · not financial advice` : `Claude (cloud) · vibe trading only · not financial advice`}
-          </p>
+          <p className="text-faint text-xs mt-1.5 px-1">Vibe trading only · not financial advice</p>
         </div>
       </div>
     )
   }
 
-  // ── Standalone card mode (legacy, kept for backward compat) ─────
+  // ── Standalone card mode ─────────────────────────────────────────
   return (
     <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
 
@@ -591,23 +429,12 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
         <div className="flex items-center gap-2">
           <Sparkles size={14} className="text-accent-blue" />
           <span className="text-primary text-sm font-semibold">Trading Agent</span>
-          <span className="text-muted text-xs">
-            — {useOllama ? `local Gemma` : `Claude`}
-          </span>
         </div>
         {open ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
       </button>
 
       {open && (
         <div className="border-t border-border">
-
-          {/* Mode toggle bar */}
-          <div className="px-4 pt-2 pb-1 flex items-center gap-2 border-b border-border/50">
-            <ModeBadge />
-            {ollamaOk === false && (
-              <span className="text-xs text-faint">Ollama not detected on localhost:11434</span>
-            )}
-          </div>
 
           {/* Message list */}
           <div className="h-64 overflow-y-auto px-4 py-3 space-y-3">
@@ -693,9 +520,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                 <Send size={15} />
               </button>
             </div>
-            <p className="text-faint text-xs mt-1.5 px-1">
-              {useOllama ? `Gemma (local) · vibe trading only · not financial advice` : `Claude (cloud) · vibe trading only · not financial advice`}
-            </p>
+            <p className="text-faint text-xs mt-1.5 px-1">Vibe trading only · not financial advice</p>
           </div>
         </div>
       )}

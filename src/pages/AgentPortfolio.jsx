@@ -7,13 +7,16 @@
  *  - Configured     → Dashboard (holdings, P&L, next run, decisions log)
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  Bot, Play, Pause, RotateCcw, Settings, TrendingUp, TrendingDown,
+  Bot, Play, Pause, RotateCcw, Settings,
   Clock, Zap, ChevronDown, ChevronUp, AlertCircle, CheckCircle2,
-  BarChart3, Sparkles, RefreshCw,
+  Sparkles, RefreshCw, DollarSign, TrendingUp, ChevronsUpDown,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useLivePrices } from '../hooks/useLivePrices'
+import StockTreemap from '../components/StockTreemap'
+import { useApp, ACTIONS } from '../context/AppContext'
 
 const API = (path, opts = {}) => {
   const token = localStorage.getItem('tradebuddy_token')
@@ -376,13 +379,21 @@ function SettingsPanel({ settings, onSaved, onReset }) {
 
 // ── Main Dashboard ────────────────────────────────────────────────
 function Dashboard({ state, onRefresh }) {
-  const { settings, holdings, runs, summary } = state
-  const [running,     setRunning]     = useState(false)
-  const [runError,    setRunError]    = useState(null)
+  const { settings, holdings: rawHoldings, runs, summary } = state
+  const { dispatch } = useApp()
+  const [running,      setRunning]      = useState(false)
+  const [runError,     setRunError]     = useState(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [history,     setHistory]     = useState(runs ?? [])
+  const [history,      setHistory]      = useState(runs ?? [])
+  const [sortKey,      setSortKey]      = useState('value')
+  const [sortDir,      setSortDir]      = useState('desc')
 
   useEffect(() => { setHistory(runs ?? []) }, [runs])
+
+  const cycleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(key); setSortDir('desc') }
+  }
 
   const handleRunNow = async () => {
     setRunning(true); setRunError(null)
@@ -393,12 +404,59 @@ function Dashboard({ state, onRefresh }) {
     finally { setRunning(false) }
   }
 
-  const gain      = summary.totalReturn ?? 0
-  const gainPct   = summary.totalReturnPct ?? 0
-  const isPaused  = settings.status === 'paused'
+  const isPaused = settings.status === 'paused'
+  const gain     = summary.totalReturn ?? 0
+  const gainPct  = summary.totalReturnPct ?? 0
+
+  // Enrich with live prices for today's % change
+  const symbols = rawHoldings.map(h => h.symbol)
+  const { prices } = useLivePrices(symbols)
+
+  const holdings = useMemo(() => rawHoldings.map(h => {
+    const live     = prices.get(h.symbol)
+    const price    = live?.price     ?? parseFloat(h.price    ?? 0)
+    const changePct = live?.changePct ?? 0
+    const shares   = parseFloat(h.shares   ?? 0)
+    const avgCost  = parseFloat(h.avg_cost ?? h.avgCost ?? 0)
+    const value    = price * shares
+    const cost     = avgCost * shares
+    const gain     = value - cost
+    const gainPct  = cost > 0 ? (gain / cost) * 100 : 0
+    return { ...h, price, changePct, shares, avgCost, value, cost, gain, gainPct }
+  }), [rawHoldings, prices])
+
+  const sortedHoldings = useMemo(() => {
+    return [...holdings].sort((a, b) => {
+      let av, bv
+      switch (sortKey) {
+        case 'symbol':    av = a.symbol;    bv = b.symbol;    break
+        case 'shares':    av = a.shares;    bv = b.shares;    break
+        case 'avgCost':   av = a.avgCost;   bv = b.avgCost;   break
+        case 'price':     av = a.price;     bv = b.price;     break
+        case 'changePct': av = a.changePct; bv = b.changePct; break
+        case 'gain':      av = a.gain;      bv = b.gain;      break
+        case 'gainPct':   av = a.gainPct;   bv = b.gainPct;   break
+        default:          av = a.value;     bv = b.value;     break
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ?  1 : -1
+      return 0
+    })
+  }, [holdings, sortKey, sortDir])
+
+  const holdingsValue = holdings.reduce((s, h) => s + h.value, 0)
+  const totalValue    = holdingsValue + (summary.cash ?? 0)
+
+  // Today's P/L
+  const todayPL = holdings.reduce((s, h) => {
+    const prev = h.changePct !== 0 ? h.value / (1 + h.changePct / 100) : h.value
+    return s + (h.value - prev)
+  }, 0)
+  const prevValue  = holdingsValue - todayPL
+  const todayPLPct = prevValue > 0 ? (todayPL / prevValue) * 100 : 0
 
   return (
-    <div className="p-6 space-y-5 max-w-4xl">
+    <div className="p-4 sm:p-6 space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -418,7 +476,7 @@ function Dashboard({ state, onRefresh }) {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowSettings(v => !v)}
-            className={clsx('p-2 rounded-lg border transition-colors text-sm',
+            className={clsx('p-2 rounded-lg border transition-colors',
               showSettings ? 'border-accent-blue/40 text-accent-blue bg-accent-blue/10' : 'border-border text-muted hover:text-primary hover:bg-surface-hover'
             )}>
             <Settings size={15} />
@@ -438,7 +496,6 @@ function Dashboard({ state, onRefresh }) {
         </div>
       )}
 
-      {/* Settings panel */}
       {showSettings && (
         <SettingsPanel
           settings={settings}
@@ -447,66 +504,195 @@ function Dashboard({ state, onRefresh }) {
         />
       )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Total Value',    value: fmt$(summary.totalValue),    sub: null },
-          { label: 'Cash',           value: fmt$(summary.cash),          sub: `${((summary.cash / summary.totalValue) * 100).toFixed(1)}% of portfolio` },
-          { label: 'Total Return',   value: fmt$(gain),                  sub: fmtPct(gainPct), color: gain >= 0 ? 'text-gain' : 'text-loss' },
-          { label: 'Next Rebalance', value: countdown(settings.next_run_at), sub: isPaused ? 'paused' : settings.frequency },
-        ].map(card => (
-          <div key={card.label} className="bg-surface-card border border-border rounded-xl px-4 py-3">
-            <p className="text-muted text-xs mb-1">{card.label}</p>
-            <p className={clsx('text-primary font-semibold text-base', card.color)}>{card.value}</p>
-            {card.sub && <p className={clsx('text-xs mt-0.5', card.color ?? 'text-faint')}>{card.sub}</p>}
+      {/* ── Summary cards ─────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-surface-card border border-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign size={14} className="text-muted" />
+            <p className="text-muted text-xs">Total Value</p>
           </div>
-        ))}
+          <p className="text-primary font-bold text-2xl">
+            {fmt$(totalValue)}
+          </p>
+          <p className="text-muted text-xs mt-0.5">cash + holdings</p>
+        </div>
+
+        <div className="bg-surface-card border border-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign size={14} className="text-accent-blue" />
+            <p className="text-muted text-xs">Cash</p>
+          </div>
+          <p className="text-accent-blue font-bold text-2xl">{fmt$(summary.cash)}</p>
+          <p className="text-muted text-xs mt-0.5">
+            {totalValue > 0 ? `${((summary.cash / totalValue) * 100).toFixed(1)}% of portfolio` : 'buying power'}
+          </p>
+        </div>
+
+        <div className="bg-surface-card border border-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp size={14} className="text-muted" />
+            <p className="text-muted text-xs">Total Return</p>
+          </div>
+          <p className={clsx('font-bold text-2xl', gain >= 0 ? 'text-gain' : 'text-loss')}>
+            {gain >= 0 ? '+' : ''}{fmt$(gain)}
+          </p>
+          <p className={clsx('text-xs mt-0.5', gainPct >= 0 ? 'text-gain' : 'text-loss')}>
+            {fmtPct(gainPct)} unrealized
+          </p>
+        </div>
+
+        <div className="bg-surface-card border border-border rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock size={14} className="text-muted" />
+            <p className="text-muted text-xs">Next Rebalance</p>
+          </div>
+          <p className="text-primary font-bold text-2xl">{countdown(settings.next_run_at)}</p>
+          <p className="text-muted text-xs mt-0.5 capitalize">
+            {isPaused ? 'paused' : settings.frequency}
+          </p>
+        </div>
       </div>
 
-      {/* Holdings */}
+      {/* ── Allocation treemap ─────────────────────────────── */}
+      {holdings.length > 0 && totalValue > 0 && (
+        <StockTreemap
+          data={holdings.map(h => ({
+            name:      h.symbol,
+            symbol:    h.symbol,
+            size:      h.value,
+            changePct: h.changePct,
+            price:     h.price,
+            tooltipLines: [
+              `Value: ${fmt$(h.value)}`,
+              `Allocation: ${((h.value / totalValue) * 100).toFixed(1)}%`,
+              `Return: ${h.gainPct >= 0 ? '+' : ''}${h.gainPct.toFixed(2)}%`,
+            ],
+          }))}
+          height={200}
+          clampRange={[-5, 5]}
+          onCellClick={(sym) => dispatch({ type: ACTIONS.VIEW_STOCK, payload: sym })}
+          title="Portfolio Allocation"
+          subtitle="Size = position value · Color = today's price change %"
+        />
+      )}
+
+      {/* ── Holdings table ─────────────────────────────────── */}
       <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-border flex items-center gap-2">
-          <BarChart3 size={14} className="text-accent-blue" />
-          <p className="text-primary text-sm font-medium">Holdings</p>
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+          <h2 className="text-primary text-sm font-semibold">Holdings ({holdings.length})</h2>
+          <span className="text-faint text-xs italic flex items-center gap-1">
+            <Bot size={11} /> AI managed
+          </span>
         </div>
+
         {holdings.length === 0 ? (
-          <div className="px-5 py-8 text-center">
-            <p className="text-muted text-sm">No positions yet — run a rebalance to get started.</p>
+          <div className="px-5 py-12 text-center text-muted text-sm">
+            No positions yet — click <strong>Run Now</strong> to let the agent build the portfolio.
           </div>
         ) : (
-          <div className="divide-y divide-border/50">
-            {holdings.map(h => {
-              const pct = summary.totalValue > 0 ? (h.value / summary.totalValue) * 100 : 0
-              return (
-                <div key={h.symbol} className="px-5 py-3 flex items-center gap-3">
-                  <div className="w-24 shrink-0">
-                    <p className="text-primary text-sm font-mono font-semibold">{h.symbol}</p>
-                    <p className="text-faint text-xs">{Number(h.shares).toFixed(3)} shares</p>
-                  </div>
-                  {/* Weight bar */}
-                  <div className="flex-1 hidden sm:block">
-                    <div className="h-1.5 bg-surface-hover rounded-full overflow-hidden">
-                      <div className="h-full bg-accent-blue/50 rounded-full" style={{ width: `${Math.min(pct, 100)}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-primary text-sm font-medium">{fmt$(h.value)}</p>
-                    <p className="text-faint text-xs">{pct.toFixed(1)}%</p>
-                  </div>
-                  <div className="text-right shrink-0 w-20">
-                    <p className={clsx('text-xs font-medium', h.gain >= 0 ? 'text-gain' : 'text-loss')}>
-                      {h.gain >= 0 ? '+' : ''}{fmt$(h.gain)}
-                    </p>
-                    <p className="text-faint text-xs">@ {fmt$(h.price)}</p>
-                  </div>
-                </div>
-              )
-            })}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className="text-muted text-xs border-b border-border">
+                  {[
+                    { key: 'symbol',    label: 'Symbol',         align: 'left'  },
+                    { key: 'shares',    label: 'Shares',         align: 'right' },
+                    { key: 'avgCost',   label: 'Avg Cost',       align: 'right' },
+                    { key: 'price',     label: 'Current (Live)', align: 'right' },
+                    { key: 'changePct', label: 'Today',          align: 'right' },
+                    { key: 'value',     label: 'Value',          align: 'right' },
+                    { key: 'gain',      label: 'Gain / Loss',    align: 'right' },
+                  ].map(({ key, label, align }) => {
+                    const active = sortKey === key
+                    return (
+                      <th
+                        key={key}
+                        onClick={() => cycleSort(key)}
+                        className={clsx(
+                          'px-5 py-3 font-medium cursor-pointer select-none hover:text-primary transition-colors',
+                          align === 'left' ? 'text-left px-3' : 'text-right',
+                          active && 'text-primary'
+                        )}
+                      >
+                        <span className="inline-flex items-center gap-1 justify-end w-full">
+                          {align === 'left' && active && (
+                            sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                          )}
+                          {label}
+                          {align !== 'left' && (
+                            active
+                              ? (sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)
+                              : <ChevronsUpDown size={11} className="opacity-30" />
+                          )}
+                        </span>
+                      </th>
+                    )
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedHoldings.map(h => (
+                  <tr key={h.symbol} className="border-t border-border hover:bg-surface-hover transition-colors">
+                    <td className="px-3 py-3">
+                      <button onClick={() => dispatch({ type: ACTIONS.VIEW_STOCK, payload: h.symbol })} className="text-left">
+                        <p className="text-primary font-mono font-semibold">{h.symbol}</p>
+                      </button>
+                    </td>
+                    <td className="text-right px-5 py-3 text-secondary">
+                      {Number(h.shares).toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                    </td>
+                    <td className="text-right px-5 py-3 text-secondary">${h.avgCost.toFixed(2)}</td>
+                    <td className="text-right px-5 py-3 text-primary">${h.price.toFixed(2)}</td>
+                    <td className="text-right px-5 py-3">
+                      {(() => {
+                        const dayPL = h.changePct !== 0 ? h.value - h.value / (1 + h.changePct / 100) : 0
+                        return (
+                          <>
+                            <p className={clsx('font-medium text-sm', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
+                              {h.changePct >= 0 ? '+' : ''}${Math.abs(dayPL).toFixed(2)}
+                            </p>
+                            <p className={clsx('text-xs', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
+                              {h.changePct >= 0 ? '+' : ''}{h.changePct.toFixed(2)}%
+                            </p>
+                          </>
+                        )
+                      })()}
+                    </td>
+                    <td className="text-right px-5 py-3 text-primary font-medium">
+                      {fmt$(h.value)}
+                    </td>
+                    <td className="text-right px-5 py-3">
+                      <p className={clsx('font-medium', h.gain >= 0 ? 'text-gain' : 'text-loss')}>
+                        {h.gain >= 0 ? '+' : ''}${h.gain.toFixed(2)}
+                      </p>
+                      <p className={clsx('text-xs', h.gainPct >= 0 ? 'text-gain' : 'text-loss')}>
+                        {h.gainPct >= 0 ? '+' : ''}{h.gainPct.toFixed(2)}%
+                      </p>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Cash row */}
+                {summary.cash > 0 && (
+                  <tr className="border-t border-border bg-accent-blue/5">
+                    <td className="px-3 py-3">
+                      <p className="text-accent-blue font-mono font-semibold">CASH</p>
+                    </td>
+                    <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                    <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                    <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                    <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                    <td className="text-right px-5 py-3 text-accent-blue font-medium">{fmt$(summary.cash)}</td>
+                    <td className="text-right px-5 py-3 text-muted text-xs">—</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      {/* Bias display */}
+      {/* ── Active strategy ─────────────────────────────────── */}
       <div className="bg-surface-card border border-border rounded-xl px-5 py-4 flex items-start gap-3">
         <Sparkles size={14} className="text-accent-blue shrink-0 mt-0.5" />
         <div className="flex-1">
@@ -518,7 +704,7 @@ function Dashboard({ state, onRefresh }) {
         </div>
       </div>
 
-      {/* Run history */}
+      {/* ── Rebalance history ───────────────────────────────── */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Clock size={14} className="text-accent-blue" />
