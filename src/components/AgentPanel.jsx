@@ -268,10 +268,17 @@ function MCPSettings() {
                 </div>
               </div>
               {testRes[s.id] && (
-                <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg ${testRes[s.id].ok ? 'text-gain bg-gain/10' : 'text-loss bg-loss/10'}`}>
-                  {testRes[s.id].ok
-                    ? <><CheckCircle2 size={11} /> {testRes[s.id].toolCount} tool{testRes[s.id].toolCount !== 1 ? 's' : ''} available</>
-                    : <><AlertCircle  size={11} /> {testRes[s.id].error}</>}
+                <div className={`text-xs px-2 py-1.5 rounded-lg ${testRes[s.id].ok ? 'text-gain bg-gain/10' : 'text-loss bg-loss/10'}`}>
+                  {testRes[s.id].ok ? (
+                    <div>
+                      <span className="flex items-center gap-1"><CheckCircle2 size={11} /> {testRes[s.id].toolCount} tool{testRes[s.id].toolCount !== 1 ? 's' : ''} available</span>
+                      {testRes[s.id].toolNames?.length > 0 && (
+                        <p className="text-gain/60 mt-0.5 pl-4">{testRes[s.id].toolNames.join(', ')}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-1"><AlertCircle size={11} /> {testRes[s.id].error}</span>
+                  )}
                 </div>
               )}
             </div>
