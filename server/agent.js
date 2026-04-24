@@ -117,7 +117,7 @@ async function fetchNewsForTicker(symbol, apiKey) {
  */
 async function fetchLiveMarketContext(tickers) {
   const key = process.env.POLYGON_API_KEY
-  if (!key || tickers.length === 0) return { contextBlock: null, tickersFetched: [], newsArticles: [] }
+  if (!key || tickers.length === 0) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
 
   const uniqueSyms = [...new Set(tickers)].slice(0, 5)
   const syms       = uniqueSyms.join(',')
@@ -131,7 +131,7 @@ async function fetchLiveMarketContext(tickers) {
 
     // ── Price data ────────────────────────────────────────────
     if (snapshotRes.status !== 'fulfilled' || !snapshotRes.value.ok) {
-      return { contextBlock: null, tickersFetched: [] }
+      return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
     }
     const data      = await snapshotRes.value.json()
     const snapshots = (data.tickers ?? []).map(t => ({
@@ -146,7 +146,7 @@ async function fetchLiveMarketContext(tickers) {
       volume:    t.day?.v    || 0,
     }))
 
-    if (snapshots.length === 0) return { contextBlock: null, tickersFetched: [], newsArticles: [] }
+    if (snapshots.length === 0) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
 
     const priceLines = snapshots.map(s => {
       const dir = s.change >= 0 ? '▲' : '▼'
@@ -166,25 +166,28 @@ async function fetchLiveMarketContext(tickers) {
 
     const allArticles = newsItems.flatMap(n => n.articles)
 
-    // ── Assemble context block ─────────────────────────────────
-    let contextBlock =
+    // ── Assemble context blocks ────────────────────────────────
+    const priceBlock =
       '📈 LIVE MARKET DATA (Polygon.io — use these exact numbers in your answer):\n\n' +
       priceLines.join('\n\n') +
       '\n\nIMPORTANT: Always quote the exact prices above. Never use outdated or approximate values.'
 
-    if (newsItems.length > 0) {
-      contextBlock +=
-        '\n\n📰 RECENT NEWS (use these headlines to inform your analysis):\n\n' +
+    const newsBlock = newsItems.length > 0
+      ? '\n\n📰 RECENT NEWS (use these headlines to inform your analysis):\n\n' +
         newsItems.map(n => n.promptBlock).join('\n\n')
-    }
+      : ''
+
+    // Full block = prices + news (used when no MCP tools are connected)
+    const contextBlock = priceBlock + newsBlock
 
     return {
       contextBlock,
+      priceBlock,   // prices only — used when MCP tools handle news
       tickersFetched: snapshots.map(s => s.symbol),
       newsArticles:   allArticles,
     }
   } catch {
-    return { contextBlock: null, tickersFetched: [], newsArticles: [] }
+    return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
   }
 }
 
@@ -355,36 +358,69 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
         )
         .join('\n')
 
-  // ── Fetch live market data before calling the LLM ────────────────
-  // Extract tickers from: (1) explicit mentions in the message, and
-  // (2) the user's portfolio holdings (for "how are my holdings doing?" queries)
+  // ── Step 1: extract tickers ──────────────────────────────────────
   const portfolioTickers = (portfolio ?? []).map(h => h.symbol).filter(Boolean)
   let   candidateTickers = extractTickers(message)
-
-  // If no tickers found but the message references the portfolio, use holdings
   const isPortfolioQuery = /\b(portfolio|holdings?|positions?|my stock|mine)\b/i.test(message)
   if (candidateTickers.length === 0 && isPortfolioQuery) {
     candidateTickers = portfolioTickers
   }
 
-  const { contextBlock, tickersFetched, newsArticles } = await fetchLiveMarketContext(candidateTickers)
+  // ── Step 2: detect intent ─────────────────────────────────────────
+  // Trade commands need prices only. Research/news queries benefit from
+  // MCP search tools. No point calling Tavily for "buy 10 GOOGL".
+  const isTradeCommand   = /\b(buy|sell|remove|close|exit)\b/i.test(message)
+  const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think)\b/i.test(message)
+  const needsMCPSearch   = !isTradeCommand && isResearchQuery
 
-  // ── Build system prompt with optional live data section ──────────
-  const liveSection = contextBlock ? `\n\n${contextBlock}` : ''
-
-  // Collect MCP tool definitions (already in Anthropic format, with _mcp* meta)
+  // ── Step 3: collect MCP tool definitions ─────────────────────────
   const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
 
-  // Build an explicit MCP tools section listing each tool by name
-  const mcpSection = mcpToolDefs.length > 0
-    ? `\n\nCONNECTED EXTERNAL TOOLS (MCP):
-You have real-time tool access via the following MCP tools. You MUST call them instead of saying you lack real-time data:
-${mcpToolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+  // Find "search" tools — only used when the query warrants external lookup
+  const searchTools = needsMCPSearch
+    ? mcpToolDefs.filter(t =>
+        /search|news|crawl|fetch|browse|retrieve|web/i.test(t.name + ' ' + (t.description ?? ''))
+      )
+    : []
 
-Rules for MCP tool use:
-- If the user asks for news, search results, or any current/live information → call the appropriate search tool immediately
-- NEVER say "I don't have access to real-time data" — you DO, via the tools above
-- After receiving a tool result, summarise it concisely for the user`
+  // ── Step 4: pre-fetch relevant context sources in parallel ────────
+  const [marketCtx, ...mcpResults] = await Promise.allSettled([
+    fetchLiveMarketContext(candidateTickers),
+    ...searchTools.map(tool => {
+      const query = candidateTickers.length > 0
+        ? `${message} ${candidateTickers.join(' ')}`
+        : message
+      return callMCPTool(
+        { url: tool._mcpServerUrl, auth_header: tool._mcpAuthHeader },
+        tool._mcpToolName,
+        { query }
+      ).then(result => ({ toolName: tool.name, result }))
+        .catch(err  => ({ toolName: tool.name, result: `Error: ${err.message}` }))
+    }),
+  ])
+
+  const { contextBlock, tickersFetched, newsArticles } =
+    marketCtx.status === 'fulfilled'
+      ? marketCtx.value
+      : { contextBlock: null, tickersFetched: [], newsArticles: [] }
+
+  // Collect MCP results that succeeded
+  const mcpContextParts = mcpResults
+    .filter(r => r.status === 'fulfilled' && r.value?.result)
+    .map(r => {
+      const { toolName, result } = r.value
+      console.log(`[agent] pre-fetched "${toolName}" → ${String(result).length} chars`)
+      return `[${toolName} results]\n${result}`
+    })
+
+  const mcpToolsUsed = mcpResults
+    .filter(r => r.status === 'fulfilled' && r.value?.result && !r.value.result.startsWith('Error:'))
+    .map(r => r.value.toolName)
+
+  // ── Step 5: assemble system prompt with all pre-fetched context ──
+  const liveSection = contextBlock ? `\n\n${contextBlock}` : ''
+  const mcpSection  = mcpContextParts.length > 0
+    ? `\n\n📡 EXTERNAL SEARCH RESULTS (use this information to answer the user):\n\n${mcpContextParts.join('\n\n')}`
     : ''
 
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
@@ -407,57 +443,24 @@ Trade execution guidelines:
 When the user asks how to do something in the app, answer using the guide below.
 ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
 
+  // ── Step 6: single LLM call with all context pre-loaded ──────────
   const llmCfg = {
     provider: llmConfig.provider || 'anthropic',
     model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
     apiKey:   llmConfig.apiKey   || null,
   }
 
-  const allTools = [...TOOLS, ...mcpToolDefs.map(t => ({
-    name:         t.name,
-    description:  t.description,
-    input_schema: t.input_schema,
-  }))]
-
-  const turn1 = await callLLM(llmCfg, { systemPrompt, userMessage: message, tools: allTools })
-
-  // ── MCP tool call: execute it and make a second LLM pass ─────────
-  if (turn1.toolName && mcpToolDefs.find(t => t.name === turn1.toolName)) {
-    const mcpDef = mcpToolDefs.find(t => t.name === turn1.toolName)
-    let mcpResult = ''
-    try {
-      const server = mcpServers.find(s => s.id === mcpDef._mcpServerId)
-      mcpResult = await callMCPTool(
-        { url: mcpDef._mcpServerUrl, auth_header: mcpDef._mcpAuthHeader },
-        mcpDef._mcpToolName,
-        turn1.toolInput ?? {}
-      )
-      console.log(`[agent] MCP tool "${mcpDef._mcpToolName}" on "${server?.name}" returned ${mcpResult.length} chars`)
-    } catch (err) {
-      mcpResult = `Tool call failed: ${err.message}`
-    }
-
-    // Second pass: give the LLM the tool result and let it respond
-    const enrichedPrompt = systemPrompt +
-      `\n\nTOOL RESULT from ${turn1.toolName}:\n${mcpResult}\n\nNow answer the user's question using this information.`
-    const turn2 = await callLLM(llmCfg, { systemPrompt: enrichedPrompt, userMessage: message, tools: TOOLS })
-    return {
-      response:       turn2.text ?? mcpResult,
-      trade:          null,
-      tickersFetched,
-      newsArticles,
-      mcpToolUsed:    turn1.toolName,
-    }
-  }
+  const turn1 = await callLLM(llmCfg, { systemPrompt, userMessage: message, tools: TOOLS })
 
   const { text, toolName, toolInput } = turn1
 
   if (!toolName) {
     return {
-      response: text ?? "I'm not sure how to help with that. Try \"buy 10 AAPL at 180\" or \"sell half my TSLA\".",
-      trade:    null,
+      response:    text ?? "I'm not sure how to help with that. Try \"buy 10 AAPL at 180\" or \"sell half my TSLA\".",
+      trade:       null,
       tickersFetched,
       newsArticles,
+      mcpToolUsed: mcpToolsUsed.length > 0 ? mcpToolsUsed[0] : null,
     }
   }
 
@@ -474,18 +477,13 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
     }
     if (toolName === 'execute_sell') {
       const { symbol, shares, reasoning } = toolInput
-      // Re-use a price we already fetched, or fall back to a fresh Polygon call
       const sym = symbol.toUpperCase()
       let livePrice = 0
-      const already = tickersFetched.includes(sym)
-      if (already) {
-        // Price was fetched as part of the live-data pre-fetch above —
-        // parse it back out of contextBlock so we don't double-call Polygon
+      if (tickersFetched.includes(sym)) {
         const m = contextBlock?.match(new RegExp(`\\[${sym}\\][\\s\\S]*?Price:\\s+\\$([\\d.]+)`))
         livePrice = m ? parseFloat(m[1]) : 0
       }
       if (!livePrice) {
-        // Fallback: direct Polygon call
         try {
           const key = process.env.POLYGON_API_KEY
           if (key) {
