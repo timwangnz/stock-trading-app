@@ -11,8 +11,9 @@
  *  6. Schedule next run
  */
 
-import pool                       from './db.js'
+import pool                            from './db.js'
 import { callLLM, extractJsonFromText } from './llm.js'
+import { getToolsFromServer, callMCPTool } from './mcp.js'
 
 // ── Candidate stock universe the agent can pick from ─────────────
 // A broad cross-sector watchlist. The LLM selects a subset based on bias.
@@ -105,7 +106,7 @@ const REBALANCE_TOOL = {
   },
 }
 
-async function getLLMDecisions({ settings, holdings, prices, newsBlock, totalValue, llmConfig }) {
+async function getLLMDecisions({ settings, holdings, prices, newsBlock, totalValue, llmConfig, mcpServers = [] }) {
   const holdingLines = holdings.length
     ? holdings.map(h => {
         const price = prices[h.symbol] ?? 0
@@ -146,22 +147,55 @@ RULES:
 - Write a 2–3 sentence summary of your strategy this cycle
 - This is vibe (simulated) trading only — not real financial advice`
 
-  const provider = llmConfig.provider || 'anthropic'
-  const model    = llmConfig.model    || 'claude-haiku-4-5-20251001'
+  const provider    = llmConfig.provider || 'anthropic'
+  const model       = llmConfig.model    || 'claude-haiku-4-5-20251001'
+  const llmCfg      = { provider, model, apiKey: llmConfig.apiKey || null }
+
+  // Collect MCP tool definitions from connected servers
+  const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
+  const allTools    = [REBALANCE_TOOL, ...mcpToolDefs.map(t => ({
+    name: t.name, description: t.description, input_schema: t.input_schema,
+  }))]
+  if (mcpToolDefs.length > 0) {
+    console.log(`[agent] MCP tools available: ${mcpToolDefs.map(t => t.name).join(', ')}`)
+  }
   console.log(`[agent] Calling LLM  provider=${provider}  model=${model}`)
 
-  const raw = await callLLM(
-    { provider, model, apiKey: llmConfig.apiKey || null },
-    { systemPrompt, userMessage: 'Please rebalance the portfolio now.', tools: [REBALANCE_TOOL] }
-  )
+  // ── MCP-aware loop (max 3 turns) ─────────────────────────────────
+  // The LLM may call MCP tools to gather extra context before returning
+  // the final rebalance_portfolio decision.
+  let activePrompt = systemPrompt
+  let raw          = null
+  for (let turn = 0; turn < 3; turn++) {
+    raw = await callLLM(llmCfg, {
+      systemPrompt: activePrompt,
+      userMessage:  'Please rebalance the portfolio now.',
+      tools:        allTools,
+    })
+    console.log(`[agent] LLM turn ${turn + 1}  toolName=${raw.toolName}  hasToolInput=${!!raw.toolInput}  textLen=${raw.text?.length ?? 0}`)
 
-  console.log(`[agent] LLM raw response  toolName=${raw.toolName}  hasToolInput=${!!raw.toolInput}  textLen=${raw.text?.length ?? 0}`)
-  if (!raw.toolInput) {
-    console.warn('[agent] WARNING: LLM returned no toolInput — raw text:', raw.text?.slice(0, 400))
-    return null
+    // MCP tool call — execute and feed result back for next turn
+    const mcpDef = raw.toolName ? mcpToolDefs.find(t => t.name === raw.toolName) : null
+    if (mcpDef) {
+      let result = ''
+      try {
+        result = await callMCPTool(
+          { url: mcpDef._mcpServerUrl, auth_header: mcpDef._mcpAuthHeader },
+          mcpDef._mcpToolName,
+          raw.toolInput ?? {}
+        )
+        console.log(`[agent] MCP "${mcpDef._mcpToolName}" → ${result.length} chars`)
+      } catch (err) {
+        result = `Tool error: ${err.message}`
+        console.warn(`[agent] MCP tool call failed:`, err.message)
+      }
+      activePrompt += `\n\nTOOL RESULT from ${raw.toolName}:\n${result}\n\nNow use this context to make your final rebalancing decision.`
+      continue
+    }
+    break  // got rebalance_portfolio call (or Ollama plain text)
   }
 
-  // Second-chance: if callOllama's extractor failed, try again here with the raw text
+  // Second-chance JSON extraction for Ollama plain-text responses
   if (!raw.toolInput && raw.text) {
     console.warn('[agent] toolInput missing — retrying JSON extraction from raw text...')
     console.log('[agent] Full raw text:', raw.text)
@@ -173,6 +207,11 @@ RULES:
       console.error('[agent] Retry extraction also failed — giving up')
       return null
     }
+  }
+
+  if (!raw.toolInput) {
+    console.warn('[agent] WARNING: LLM returned no toolInput — raw text:', raw.text?.slice(0, 400))
+    return null
   }
 
   // Log the raw JSON so we can see exactly what field names the model used
@@ -371,9 +410,20 @@ export async function runRebalance(userId, llmConfig = {}) {
     const totalValue    = holdingsValue + parseFloat(settings.cash)
     console.log(`${tag} Portfolio value: $${totalValue.toFixed(2)}  (holdings $${holdingsValue.toFixed(2)} + cash $${settings.cash})`)
 
+    // Load user's enabled MCP servers + their tools
+    const { rows: mcpRows } = await pool.query(
+      'SELECT * FROM mcp_servers WHERE user_id=$1 AND enabled=true', [userId]
+    )
+    const mcpServers = await Promise.all(
+      mcpRows.map(async s => ({ ...s, _tools: await getToolsFromServer(s) }))
+    )
+    if (mcpServers.length > 0) {
+      console.log(`${tag} Loaded ${mcpServers.length} MCP server(s): ${mcpServers.map(s => s.name).join(', ')}`)
+    }
+
     // Get LLM target allocation
     const llmResult = await getLLMDecisions({
-      settings, holdings, prices, newsBlock, totalValue, llmConfig,
+      settings, holdings, prices, newsBlock, totalValue, llmConfig, mcpServers,
     })
     if (!llmResult?.decisions?.length) throw new Error('LLM returned no decisions')
 
