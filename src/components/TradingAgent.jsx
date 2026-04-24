@@ -16,7 +16,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Bot, Send, TrendingUp, TrendingDown, Trash2, Sparkles,
-         ChevronDown, ChevronUp, Cpu, Cloud } from 'lucide-react'
+         ChevronDown, ChevronUp, Cpu, Cloud, Newspaper, ExternalLink, Zap } from 'lucide-react'
 import clsx from 'clsx'
 import { streamOllamaChat, isOllamaAvailable } from '../services/ollama'
 import { buildMarketContext } from '../services/marketContext'
@@ -165,6 +165,57 @@ function TradeBadge({ trade }) {
       <Icon size={11} />
       {label}
       {trade.price && ` @ $${Number(trade.price).toFixed(2)}`}
+    </span>
+  )
+}
+
+// ── News panel ───────────────────────────────────────────────────
+function NewsPanel({ articles }) {
+  const [open, setOpen] = useState(false)
+  if (!articles?.length) return null
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="inline-flex items-center gap-1.5 text-xs text-faint hover:text-muted transition-colors"
+      >
+        <Newspaper size={11} />
+        <span>{articles.length} headline{articles.length > 1 ? 's' : ''}</span>
+        {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5 border-l-2 border-border/60 pl-3">
+          {articles.map((a, i) => (
+            <div key={i} className="space-y-0.5">
+              <div className="flex items-start gap-1.5">
+                <span className="text-faint text-xs shrink-0 font-mono w-10">{a.symbol}</span>
+                <a
+                  href={a.url ?? '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-secondary hover:text-accent-blue leading-snug flex-1 flex items-start gap-1"
+                >
+                  {a.title}
+                  {a.url && <ExternalLink size={9} className="shrink-0 mt-0.5 opacity-50" />}
+                </a>
+              </div>
+              <p className="text-faint text-xs pl-11">{a.source} · {a.age}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── MCP tool used badge ───────────────────────────────────────────
+function MCPBadge({ toolName }) {
+  if (!toolName) return null
+  const display = toolName.replace(/^mcp_[^_]+_/, '')
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-purple-400/70 mt-1">
+      <Zap size={10} />
+      MCP: {display}
     </span>
   )
 }
@@ -371,6 +422,8 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
         text:           data.response,
         trade:          data.trade,
         fetchedTickers: data.tickersFetched ?? [],
+        newsArticles:   data.newsArticles   ?? [],
+        mcpToolUsed:    data.mcpToolUsed    ?? null,
       }])
 
       if (data.trade) onTradeExecuted?.()
@@ -464,12 +517,14 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                     : m.text}
                 </div>
                 {m.trade && <TradeBadge trade={m.trade} />}
+                {m.mcpToolUsed && <MCPBadge toolName={m.mcpToolUsed} />}
                 {m.fetchedTickers?.length > 0 && (
                   <span className="inline-flex items-center gap-1 text-xs text-emerald-400/70 mt-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/60 inline-block" />
                     Live: {m.fetchedTickers.join(', ')}
                   </span>
                 )}
+                <NewsPanel articles={m.newsArticles} />
               </div>
             </div>
           ))}

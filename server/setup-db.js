@@ -464,6 +464,23 @@ async function setup() {
   await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_created ON agent_runs (created_at DESC)`)
   console.log('✅ Table "agent_runs" ready')
 
+  // ── mcp_servers ───────────────────────────────────────────────
+  // Per-user list of MCP servers the trading agent can call tools from.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id          SERIAL       PRIMARY KEY,
+      user_id     VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name        VARCHAR(100) NOT NULL,
+      url         VARCHAR(500) NOT NULL,
+      auth_header TEXT,
+      enabled     BOOLEAN      NOT NULL DEFAULT true,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_mcp_servers_user ON mcp_servers (user_id)`)
+  console.log('✅ Table "mcp_servers" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

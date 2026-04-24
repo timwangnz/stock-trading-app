@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import pool from './db.js'
 import { callLLM } from './llm.js'
+import { callMCPTool } from './mcp.js'
 
 // Load the user guide once at startup so the agent can answer UI how-to questions
 const __dir      = dirname(fileURLToPath(import.meta.url))
@@ -71,8 +72,8 @@ function extractTickers(text) {
 }
 
 /**
- * Fetch up to 3 recent news headlines for a single ticker from Polygon.
- * Returns a formatted string, or null on error / no results.
+ * Fetch up to 3 recent news articles for a single ticker from Polygon.
+ * Returns structured articles + a pre-formatted prompt string.
  */
 async function fetchNewsForTicker(symbol, apiKey) {
   try {
@@ -80,23 +81,28 @@ async function fetchNewsForTicker(symbol, apiKey) {
       `https://api.polygon.io/v2/reference/news?ticker=${symbol}&limit=3&sort=published_utc&order=desc&apiKey=${apiKey}`
     )
     if (!res.ok) return null
-    const data = await res.json()
-    const articles = data.results ?? []
-    if (articles.length === 0) return null
+    const data    = await res.json()
+    const results = data.results ?? []
+    if (results.length === 0) return null
 
-    const lines = articles.map(a => {
-      const age = (() => {
-        const diff = Date.now() - new Date(a.published_utc).getTime()
-        const h    = Math.floor(diff / 3_600_000)
-        if (h < 1)  return 'just now'
-        if (h < 24) return `${h}h ago`
-        return `${Math.floor(h / 24)}d ago`
-      })()
-      return `  • [${age}] ${a.title}` +
-        (a.description ? ` — ${a.description.slice(0, 120)}${a.description.length > 120 ? '…' : ''}` : '')
+    const articles = results.map(a => {
+      const diff = Date.now() - new Date(a.published_utc).getTime()
+      const h    = Math.floor(diff / 3_600_000)
+      const age  = h < 1 ? 'just now' : h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
+      return {
+        symbol,
+        title:       a.title,
+        description: a.description?.slice(0, 160) ?? null,
+        url:         a.article_url ?? null,
+        source:      a.publisher?.name ?? null,
+        age,
+      }
     })
 
-    return `[${symbol} Recent News]\n${lines.join('\n')}`
+    const promptBlock = `[${symbol} Recent News]\n` +
+      articles.map(a => `  • [${a.age}] ${a.title}` + (a.description ? ` — ${a.description}…` : '')).join('\n')
+
+    return { articles, promptBlock }
   } catch {
     return null
   }
@@ -111,7 +117,7 @@ async function fetchNewsForTicker(symbol, apiKey) {
  */
 async function fetchLiveMarketContext(tickers) {
   const key = process.env.POLYGON_API_KEY
-  if (!key || tickers.length === 0) return { contextBlock: null, tickersFetched: [] }
+  if (!key || tickers.length === 0) return { contextBlock: null, tickersFetched: [], newsArticles: [] }
 
   const uniqueSyms = [...new Set(tickers)].slice(0, 5)
   const syms       = uniqueSyms.join(',')
@@ -140,7 +146,7 @@ async function fetchLiveMarketContext(tickers) {
       volume:    t.day?.v    || 0,
     }))
 
-    if (snapshots.length === 0) return { contextBlock: null, tickersFetched: [] }
+    if (snapshots.length === 0) return { contextBlock: null, tickersFetched: [], newsArticles: [] }
 
     const priceLines = snapshots.map(s => {
       const dir = s.change >= 0 ? '▲' : '▼'
@@ -154,9 +160,11 @@ async function fetchLiveMarketContext(tickers) {
     })
 
     // ── News data ──────────────────────────────────────────────
-    const newsBlocks = newsResults
+    const newsItems = newsResults
       .map(r => r.status === 'fulfilled' ? r.value : null)
       .filter(Boolean)
+
+    const allArticles = newsItems.flatMap(n => n.articles)
 
     // ── Assemble context block ─────────────────────────────────
     let contextBlock =
@@ -164,15 +172,19 @@ async function fetchLiveMarketContext(tickers) {
       priceLines.join('\n\n') +
       '\n\nIMPORTANT: Always quote the exact prices above. Never use outdated or approximate values.'
 
-    if (newsBlocks.length > 0) {
+    if (newsItems.length > 0) {
       contextBlock +=
         '\n\n📰 RECENT NEWS (use these headlines to inform your analysis):\n\n' +
-        newsBlocks.join('\n\n')
+        newsItems.map(n => n.promptBlock).join('\n\n')
     }
 
-    return { contextBlock, tickersFetched: snapshots.map(s => s.symbol) }
+    return {
+      contextBlock,
+      tickersFetched: snapshots.map(s => s.symbol),
+      newsArticles:   allArticles,
+    }
   } catch {
-    return { contextBlock: null, tickersFetched: [] }
+    return { contextBlock: null, tickersFetched: [], newsArticles: [] }
   }
 }
 
@@ -331,8 +343,9 @@ async function removeStock(userId, symbol, price = 0) {
  * @param {string} opts.message
  * @param {Array}  opts.portfolio
  * @param {object} opts.llmConfig   - { provider, model, apiKey }
+ * @param {Array}  opts.mcpServers  - rows from mcp_servers with tool definitions attached
  */
-export async function runTradingAgent({ userId, message, portfolio, llmConfig = {} }) {
+export async function runTradingAgent({ userId, message, portfolio, llmConfig = {}, mcpServers = [] }) {
   const portfolioText = portfolio.length === 0
     ? 'The portfolio is currently empty.'
     : portfolio
@@ -354,11 +367,16 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
     candidateTickers = portfolioTickers
   }
 
-  const { contextBlock, tickersFetched } = await fetchLiveMarketContext(candidateTickers)
+  const { contextBlock, tickersFetched, newsArticles } = await fetchLiveMarketContext(candidateTickers)
 
   // ── Build system prompt with optional live data section ──────────
-  const liveSection = contextBlock
-    ? `\n\n${contextBlock}`
+  const liveSection = contextBlock ? `\n\n${contextBlock}` : ''
+
+  // Collect MCP tool definitions (already in Anthropic format, with _mcp* meta)
+  const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
+
+  const mcpSection = mcpToolDefs.length > 0
+    ? `\n\nYou also have access to ${mcpToolDefs.length} external tool(s) from connected MCP servers. Use them when they can enrich your answer (e.g. web search for latest news, custom data sources). After calling an MCP tool you will receive its result and can then answer the user.`
     : ''
 
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
@@ -366,7 +384,7 @@ Help the user manage their simulated portfolio using the tools provided, and ans
 
 Current portfolio:
 ${portfolioText}
-${liveSection}
+${liveSection}${mcpSection}
 Trade execution guidelines:
 - Use execute_buy when the user wants to purchase shares
 - Use execute_sell when the user wants to sell a specific number of shares
@@ -381,20 +399,57 @@ Trade execution guidelines:
 When the user asks how to do something in the app, answer using the guide below.
 ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
 
-  const { text, toolName, toolInput } = await callLLM(
-    {
-      provider: llmConfig.provider || 'anthropic',
-      model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
-      apiKey:   llmConfig.apiKey   || null,
-    },
-    { systemPrompt, userMessage: message, tools: TOOLS }
-  )
+  const llmCfg = {
+    provider: llmConfig.provider || 'anthropic',
+    model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
+    apiKey:   llmConfig.apiKey   || null,
+  }
+
+  const allTools = [...TOOLS, ...mcpToolDefs.map(t => ({
+    name:         t.name,
+    description:  t.description,
+    input_schema: t.input_schema,
+  }))]
+
+  const turn1 = await callLLM(llmCfg, { systemPrompt, userMessage: message, tools: allTools })
+
+  // ── MCP tool call: execute it and make a second LLM pass ─────────
+  if (turn1.toolName && mcpToolDefs.find(t => t.name === turn1.toolName)) {
+    const mcpDef = mcpToolDefs.find(t => t.name === turn1.toolName)
+    let mcpResult = ''
+    try {
+      const server = mcpServers.find(s => s.id === mcpDef._mcpServerId)
+      mcpResult = await callMCPTool(
+        { url: mcpDef._mcpServerUrl, auth_header: mcpDef._mcpAuthHeader },
+        mcpDef._mcpToolName,
+        turn1.toolInput ?? {}
+      )
+      console.log(`[agent] MCP tool "${mcpDef._mcpToolName}" on "${server?.name}" returned ${mcpResult.length} chars`)
+    } catch (err) {
+      mcpResult = `Tool call failed: ${err.message}`
+    }
+
+    // Second pass: give the LLM the tool result and let it respond
+    const enrichedPrompt = systemPrompt +
+      `\n\nTOOL RESULT from ${turn1.toolName}:\n${mcpResult}\n\nNow answer the user's question using this information.`
+    const turn2 = await callLLM(llmCfg, { systemPrompt: enrichedPrompt, userMessage: message, tools: TOOLS })
+    return {
+      response:       turn2.text ?? mcpResult,
+      trade:          null,
+      tickersFetched,
+      newsArticles,
+      mcpToolUsed:    turn1.toolName,
+    }
+  }
+
+  const { text, toolName, toolInput } = turn1
 
   if (!toolName) {
     return {
       response: text ?? "I'm not sure how to help with that. Try \"buy 10 AAPL at 180\" or \"sell half my TSLA\".",
       trade:    null,
       tickersFetched,
+      newsArticles,
     }
   }
 
@@ -406,7 +461,7 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
       return {
         response: `Bought ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} at $${price.toFixed(2)}. ${reasoning}`,
         trade:    { action: 'buy', ...result, price },
-        tickersFetched,
+        tickersFetched, newsArticles,
       }
     }
     if (toolName === 'execute_sell') {
@@ -440,7 +495,7 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
       const msg = result.removed
         ? `Sold all ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} — position closed. ${reasoning}`
         : `Sold ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol}. ${result.shares} remaining. ${reasoning}`
-      return { response: msg, trade: { action: result.removed ? 'remove' : 'sell', ...result }, tickersFetched }
+      return { response: msg, trade: { action: result.removed ? 'remove' : 'sell', ...result }, tickersFetched, newsArticles }
     }
     if (toolName === 'remove_holding') {
       const { symbol, reasoning } = toolInput
@@ -448,11 +503,11 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
       return {
         response: `Removed ${result.symbol} from your portfolio. ${reasoning}`,
         trade:    { action: 'remove', ...result },
-        tickersFetched,
+        tickersFetched, newsArticles,
       }
     }
-    return { response: 'Unknown action — no trade executed.', trade: null, tickersFetched }
+    return { response: 'Unknown action — no trade executed.', trade: null, tickersFetched, newsArticles }
   } catch (err) {
-    return { response: err.message, trade: null, tickersFetched }
+    return { response: err.message, trade: null, tickersFetched, newsArticles }
   }
 }

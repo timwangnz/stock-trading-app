@@ -6,7 +6,8 @@
  */
 
 import { useEffect, useCallback, useState } from 'react'
-import { X, Sparkles, Settings, Eye, EyeOff, CheckCircle2, ChevronDown } from 'lucide-react'
+import { X, Sparkles, Settings, Eye, EyeOff, CheckCircle2, ChevronDown,
+         Plug, Plus, Trash2, RefreshCw, AlertCircle, ToggleLeft, ToggleRight } from 'lucide-react'
 import { useApp, ACTIONS } from '../context/AppContext'
 import { fetchPortfolio }  from '../services/apiService'
 import { getLLMSettings, saveLLMSettings } from '../services/apiService'
@@ -170,10 +171,153 @@ function LLMSettings({ onClose }) {
   )
 }
 
+// ── MCP Settings panel ───────────────────────────────────────────
+const MCP_API = (path, opts = {}) => {
+  const token = localStorage.getItem('tradebuddy_token')
+  return fetch(`/api/mcp-servers${path}`, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers ?? {}) },
+  }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error ?? 'Request failed'); return d })
+}
+
+function MCPSettings() {
+  const [servers,  setServers]  = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [name,     setName]     = useState('')
+  const [url,      setUrl]      = useState('')
+  const [authHdr,  setAuthHdr]  = useState('')
+  const [adding,   setAdding]   = useState(false)
+  const [testing,  setTesting]  = useState(null)  // server id being tested
+  const [testRes,  setTestRes]  = useState({})    // { [id]: { ok, toolCount, error } }
+  const [error,    setError]    = useState(null)
+
+  const load = () => {
+    setLoading(true)
+    MCP_API('').then(setServers).catch(e => setError(e.message)).finally(() => setLoading(false))
+  }
+  useEffect(load, [])
+
+  const handleAdd = async (e) => {
+    e.preventDefault(); setError(null); setAdding(true)
+    try {
+      await MCP_API('', { method: 'POST', body: JSON.stringify({ name, url, authHeader: authHdr }) })
+      setName(''); setUrl(''); setAuthHdr(''); load()
+    } catch (err) { setError(err.message) }
+    finally { setAdding(false) }
+  }
+
+  const handleDelete = async (id) => {
+    await MCP_API(`/${id}`, { method: 'DELETE' }).catch(() => {})
+    load()
+  }
+
+  const handleToggle = async (server) => {
+    await MCP_API(`/${server.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !server.enabled }) }).catch(() => {})
+    load()
+  }
+
+  const handleTest = async (id) => {
+    setTesting(id); setTestRes(prev => ({ ...prev, [id]: null }))
+    const res = await MCP_API(`/${id}/test`).catch(err => ({ ok: false, error: err.message }))
+    setTestRes(prev => ({ ...prev, [id]: res }))
+    setTesting(null)
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-5 space-y-5">
+      <div>
+        <h3 className="text-primary font-semibold text-sm mb-1">MCP Servers</h3>
+        <p className="text-muted text-xs leading-relaxed">
+          Connect external MCP servers to give the Trading Agent new tools — web search, custom data sources, and more.
+          The agent will automatically discover and use their tools.
+        </p>
+      </div>
+
+      {/* Server list */}
+      {loading ? (
+        <div className="flex justify-center py-4">
+          <div className="w-5 h-5 border-2 border-border border-t-accent-blue rounded-full animate-spin" />
+        </div>
+      ) : servers.length === 0 ? (
+        <p className="text-faint text-xs text-center py-4">No MCP servers added yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {servers.map(s => (
+            <div key={s.id} className="bg-surface-hover border border-border rounded-xl p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-primary text-xs font-medium truncate">{s.name}</p>
+                  <p className="text-faint text-xs truncate">{s.url}</p>
+                  {s.auth_header && <p className="text-faint text-xs">Auth: {s.auth_header}</p>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => handleToggle(s)} title={s.enabled ? 'Disable' : 'Enable'}
+                    className={`p-1 rounded transition-colors ${s.enabled ? 'text-accent-blue' : 'text-muted'}`}>
+                    {s.enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                  </button>
+                  <button onClick={() => handleTest(s.id)} title="Test connection"
+                    className="p-1 rounded text-muted hover:text-primary transition-colors">
+                    {testing === s.id
+                      ? <RefreshCw size={13} className="animate-spin" />
+                      : <Plug size={13} />}
+                  </button>
+                  <button onClick={() => handleDelete(s.id)} title="Remove"
+                    className="p-1 rounded text-muted hover:text-loss transition-colors">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+              {testRes[s.id] && (
+                <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg ${testRes[s.id].ok ? 'text-gain bg-gain/10' : 'text-loss bg-loss/10'}`}>
+                  {testRes[s.id].ok
+                    ? <><CheckCircle2 size={11} /> {testRes[s.id].toolCount} tool{testRes[s.id].toolCount !== 1 ? 's' : ''} available</>
+                    : <><AlertCircle  size={11} /> {testRes[s.id].error}</>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add form */}
+      <form onSubmit={handleAdd} className="space-y-3 border-t border-border pt-4">
+        <h4 className="text-primary text-xs font-semibold">Add Server</h4>
+        <input value={name} onChange={e => setName(e.target.value)} required placeholder="Server name"
+          className="w-full bg-surface-hover border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-accent-blue/50 transition-colors" />
+        <input value={url} onChange={e => setUrl(e.target.value)} required placeholder="https://your-mcp-server.com/mcp"
+          className="w-full bg-surface-hover border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-accent-blue/50 transition-colors" />
+        <input value={authHdr} onChange={e => setAuthHdr(e.target.value)} placeholder="Authorization: Bearer ... (optional)"
+          className="w-full bg-surface-hover border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder-muted outline-none focus:border-accent-blue/50 transition-colors" />
+        {error && <p className="text-loss text-xs">{error}</p>}
+        <button type="submit" disabled={adding || !name.trim() || !url.trim()}
+          className="w-full bg-accent-blue hover:bg-accent-blue/80 disabled:opacity-50 text-white text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5">
+          {adding ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}
+          {adding ? 'Adding…' : 'Add Server'}
+        </button>
+      </form>
+
+      <div className="bg-surface rounded-lg border border-border p-3 space-y-1">
+        <p className="text-muted text-xs font-medium">Example MCP servers</p>
+        {[
+          { label: 'Tavily Search',  url: 'https://mcp.tavily.com/mcp' },
+          { label: 'Brave Search',   url: 'https://api.search.brave.com/mcp' },
+        ].map(({ label, url: u }) => (
+          <button key={label} type="button"
+            onClick={() => { setName(label); setUrl(u) }}
+            className="block text-accent-blue text-xs hover:underline text-left w-full">
+            {label} →
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main panel ───────────────────────────────────────────────────
 export default function AgentPanel({ open, onClose }) {
   const { state, dispatch }     = useApp()
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab,  setSettingsTab]  = useState('llm')  // 'llm' | 'mcp'
 
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
@@ -252,7 +396,27 @@ export default function AgentPanel({ open, onClose }) {
 
         {/* Content */}
         {showSettings ? (
-          <LLMSettings onClose={() => setShowSettings(false)} />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Tab bar */}
+            <div className="flex border-b border-border px-4 pt-3 pb-0 gap-1 shrink-0">
+              {[
+                { id: 'llm', label: 'AI Provider', Icon: Settings },
+                { id: 'mcp', label: 'MCP Servers', Icon: Plug     },
+              ].map(({ id, label, Icon }) => (
+                <button key={id} onClick={() => setSettingsTab(id)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
+                    settingsTab === id
+                      ? 'border-accent-blue text-accent-blue'
+                      : 'border-transparent text-muted hover:text-primary'
+                  }`}>
+                  <Icon size={12} /> {label}
+                </button>
+              ))}
+            </div>
+            {settingsTab === 'llm'
+              ? <LLMSettings onClose={() => setShowSettings(false)} />
+              : <MCPSettings />}
+          </div>
         ) : (
           <div className="flex-1 overflow-hidden">
             <TradingAgent

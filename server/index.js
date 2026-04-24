@@ -41,6 +41,7 @@ import { verifyGoogleToken, exchangeGoogleCode, signJwt, authMiddleware } from '
 import { OAuth2Client } from 'google-auth-library'
 import { requireRole, requirePermission, requireNonStudent, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
+import { getToolsFromServer, testServer } from './mcp.js'
 import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextRun } from './agentPortfolio.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
@@ -905,11 +906,20 @@ app.post('/api/agent/trade',
         apiKey:   decrypt(settings.api_key_enc),
       }
 
+      // Load enabled MCP servers and their tools for this user
+      const { rows: mcpRows } = await pool.query(
+        'SELECT * FROM mcp_servers WHERE user_id=$1 AND enabled=true', [req.user.id]
+      )
+      const mcpServers = await Promise.all(
+        mcpRows.map(async s => ({ ...s, _tools: await getToolsFromServer(s) }))
+      )
+
       const result = await runTradingAgent({
         userId:    req.user.id,
         message:   message.trim(),
         portfolio: portfolio ?? [],
         llmConfig,
+        mcpServers,
       })
       if (result.trade) {
         audit(req.user.id, `agent_${result.trade.action}`, { ...result.trade, command: message.trim() }, req)
@@ -921,6 +931,61 @@ app.post('/api/agent/trade',
     }
   }
 )
+
+// ── MCP Servers ──────────────────────────────────────────────────
+app.get('/api/mcp-servers', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, url, auth_header, enabled, created_at FROM mcp_servers WHERE user_id=$1 ORDER BY created_at',
+    [req.user.id]
+  )
+  // Mask auth header value in response
+  res.json(rows.map(r => ({ ...r, auth_header: r.auth_header ? '••••••••' : null })))
+})
+
+app.post('/api/mcp-servers', authMiddleware, async (req, res) => {
+  const { name, url, authHeader } = req.body
+  if (!name?.trim() || !url?.trim()) return res.status(400).json({ error: 'name and url are required' })
+  try {
+    new URL(url)  // validate URL
+  } catch { return res.status(400).json({ error: 'Invalid URL' }) }
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO mcp_servers (user_id, name, url, auth_header)
+     VALUES ($1,$2,$3,$4) RETURNING id, name, url, enabled, created_at`,
+    [req.user.id, name.trim(), url.trim(), authHeader?.trim() || null]
+  )
+  res.json(row)
+})
+
+app.patch('/api/mcp-servers/:id', authMiddleware, async (req, res) => {
+  const { name, url, authHeader, enabled } = req.body
+  const updates = []; const vals = []
+  if (name?.trim())          { updates.push(`name=$${vals.push(name.trim())}`) }
+  if (url?.trim())           { updates.push(`url=$${vals.push(url.trim())}`) }
+  if (authHeader !== undefined) { updates.push(`auth_header=$${vals.push(authHeader?.trim() || null)}`) }
+  if (enabled !== undefined) { updates.push(`enabled=$${vals.push(enabled)}`) }
+  if (!updates.length)       return res.status(400).json({ error: 'Nothing to update' })
+  updates.push('updated_at=NOW()')
+  vals.push(req.user.id, req.params.id)
+  await pool.query(
+    `UPDATE mcp_servers SET ${updates.join(',')} WHERE user_id=$${vals.length - 1} AND id=$${vals.length}`,
+    vals
+  )
+  res.json({ ok: true })
+})
+
+app.delete('/api/mcp-servers/:id', authMiddleware, async (req, res) => {
+  await pool.query('DELETE FROM mcp_servers WHERE user_id=$1 AND id=$2', [req.user.id, req.params.id])
+  res.json({ ok: true })
+})
+
+app.get('/api/mcp-servers/:id/test', authMiddleware, async (req, res) => {
+  const { rows: [server] } = await pool.query(
+    'SELECT * FROM mcp_servers WHERE user_id=$1 AND id=$2', [req.user.id, req.params.id]
+  )
+  if (!server) return res.status(404).json({ error: 'Server not found' })
+  const result = await testServer(server)
+  res.json(result)
+})
 
 // ── LLM settings ────────────────────────────────────────────────
 // GET — return current config (never expose the raw API key)
