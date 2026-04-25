@@ -421,7 +421,7 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
   // isTradeCommand requires explicit quantity/action syntax so that
   // advisory questions like "should I buy AAPL?" don't trigger trades.
   const isTradeCommand   = /\b(buy\s+[\d.]+|sell\s+([\d.]+|half|all)|remove|close\s+(my\s+)?[A-Z]{1,5}|exit)\b/i.test(message)
-  const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think)\b/i.test(message)
+  const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think|last (week|friday|monday|tuesday|wednesday|thursday|saturday|sunday|month|year|quarter)|yesterday|performance|how did|what did|what happened|happened|did .* open|is .* open|market open|market close|after.?hours|pre.?market|this week|today.s|this morning)\b/i.test(message)
   const needsMCPSearch   = !isTradeCommand && isResearchQuery
 
   // ── Step 3: collect MCP tool definitions ─────────────────────────
@@ -475,8 +475,11 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
     : ''
   const userContextSection = buildUserContextBlock(userContext)
 
-  const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
-Help the user manage their simulated portfolio using the tools provided, and answer questions about how to use the app.
+  const systemPrompt = `You are a knowledgeable trading assistant for TradeBuddy.
+Help the user with anything trading or markets related — market hours, news, analysis, general finance questions, and portfolio management.
+You can execute trades and answer general knowledge questions. When external or real-time data has been fetched via MCP tools, it will appear below — use it to answer precisely.
+If no external data is available and you are uncertain, say so briefly and suggest the user connect a search MCP server for live lookups.
+Today is ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' })} ET.
 
 Current portfolio:
 ${portfolioText}

@@ -29,11 +29,21 @@ export async function getSnapshots(symbols) {
   const data = await apiFetch(`/snapshots?symbols=${symbols.join(',')}`)
   return (data.tickers ?? []).map(t => ({
     symbol:    t.ticker,
-    // Fallback chain: today's close → last trade → prev day close → 0
-    // lastTrade.p is the most reliable during after-hours / weekends when day.c = 0
-    price:     t.day?.c    || t.lastTrade?.p || t.prevDay?.c || 0,
-    change:    t.day?.c    ? parseFloat((t.todaysChange     ?? 0).toFixed(2)) : 0,
-    changePct: t.day?.c    ? parseFloat((t.todaysChangePerc ?? 0).toFixed(2)) : 0,
+    // When market is open day.c has today's live/closing price.
+    // When closed (after-hours, weekend, holiday) fall back to prevDay data.
+    ...(() => {
+      const marketOpen = t.day?.c > 0
+      const price      = marketOpen ? t.day.c : (t.lastTrade?.p || t.prevDay?.c || 0)
+      const change     = marketOpen
+        ? parseFloat((t.todaysChange     ?? 0).toFixed(2))
+        : parseFloat(((t.prevDay?.c || 0) - (t.prevDay?.o || 0)).toFixed(2))
+      const changePct  = marketOpen
+        ? parseFloat((t.todaysChangePerc ?? 0).toFixed(2))
+        : t.prevDay?.o > 0
+          ? parseFloat((((t.prevDay.c - t.prevDay.o) / t.prevDay.o) * 100).toFixed(2))
+          : 0
+      return { price, change, changePct, marketOpen }
+    })(),
     volume:    t.day?.v    || 0,
     high:      t.day?.h    || 0,
     low:       t.day?.l    || 0,

@@ -51,6 +51,7 @@ import marketRouter                    from './market.js'
 import financialsRouter                from './financials.js'
 import { classRouter, leaderboardRouter, groupRouter } from './classes.js'
 import { ideasRouter }                    from './ideas.js'
+import { resolveAudience, parseAudienceDescription, executeCampaign, generateAIBody, resolveTokens } from './campaigns.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app  = express()
@@ -289,8 +290,7 @@ app.post('/api/auth/google', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
-    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
+    takeSnapshot(user.id).catch(() => {})   // safety-net: skips if scheduler already ran today
     res.json({ token, user })
   } catch (err) {
     console.error('Auth error:', err.message)
@@ -342,8 +342,7 @@ app.post('/api/auth/google-token', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
-    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
+    takeSnapshot(user.id).catch(() => {})   // safety-net: skips if scheduler already ran today
     res.json({ token, user })
   } catch (err) {
     console.error('Google token auth error:', err.message)
@@ -383,8 +382,7 @@ app.post('/api/auth/google-code', async (req, res) => {
 
     const token = signJwt(user)
     audit(user.id, 'login', { method: 'google' }, req)
-    takeSnapshot(user.id).catch(() => {})        // fire-and-forget daily snapshot
-    backfillSnapshots(user.id).catch(() => {})   // fill any gaps since last login
+    takeSnapshot(user.id).catch(() => {})   // safety-net: skips if scheduler already ran today
     res.json({ token, user })
   } catch (err) {
     console.error('Google code exchange error:', err.message)
@@ -462,8 +460,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { password_hash: _, ...safeUser } = user
     const token = signJwt(safeUser)
     audit(safeUser.id, 'login', { method: 'email' }, req)
-    takeSnapshot(safeUser.id).catch(() => {})        // fire-and-forget daily snapshot
-    backfillSnapshots(safeUser.id).catch(() => {})   // fill any gaps since last login
+    takeSnapshot(safeUser.id).catch(() => {})   // safety-net: skips if scheduler already ran today
     res.json({ token, user: safeUser })
   } catch (err) {
     console.error('Login error:', err.message)
@@ -570,11 +567,18 @@ app.post('/api/internal/snapshot-all', async (req, res) => {
   }
   try {
     const { rows: users } = await pool.query('SELECT id FROM users WHERE is_disabled = false')
-    const results = await Promise.allSettled(users.map(u => takeSnapshot(u.id)))
+    const ids = users.map(u => u.id)
+    const { rows: symbolRows } = await pool.query(
+      'SELECT DISTINCT symbol FROM portfolio WHERE user_id = ANY($1)', [ids]
+    )
+    const priceMap = symbolRows.length
+      ? await fetchPriceMap(symbolRows.map(r => r.symbol))
+      : {}
+    const results  = await Promise.allSettled(ids.map(id => takeSnapshot(id, priceMap)))
     const succeeded = results.filter(r => r.status === 'fulfilled').length
     const failed    = results.filter(r => r.status === 'rejected').length
     console.log(`[snapshot] Daily run — ${succeeded} ok, ${failed} failed`)
-    res.json({ succeeded, failed, total: users.length })
+    res.json({ succeeded, failed, total: ids.length })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1348,11 +1352,23 @@ app.get('/api/settings/llm', authMiddleware, async (req, res) => {
     'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id = $1',
     [req.user.id]
   )
+
+  // Probe Ollama — short timeout so it doesn't slow down the settings page
+  let ollamaAvailable = false
+  try {
+    const OLLAMA_BASE = process.env.OLLAMA_URL ?? 'http://localhost:11434'
+    const probe = await fetch(`${OLLAMA_BASE}/api/tags`, {
+      signal: AbortSignal.timeout(1500),
+    })
+    ollamaAvailable = probe.ok
+  } catch { /* not running */ }
+
   res.json({
-    provider:  settings?.provider  || 'anthropic',
-    model:     settings?.model     || 'claude-haiku-4-5-20251001',
-    hasApiKey: !!settings?.api_key_enc,
-    providers: PROVIDERS,
+    provider:        settings?.provider  || 'anthropic',
+    model:           settings?.model     || 'claude-haiku-4-5-20251001',
+    hasApiKey:       !!settings?.api_key_enc,
+    providers:       PROVIDERS,
+    ollamaAvailable,
   })
 })
 
@@ -1500,23 +1516,82 @@ app.get('/api/admin/users/:id/watchlist', adminOnly, async (req, res) => {
 // ── Portfolio snapshots ──────────────────────────────────────────
 
 /**
- * Core snapshot logic — shared by all snapshot endpoints.
- * Fetches live prices from Polygon, computes total_value = Σ(shares × price),
- * and upserts one row into portfolio_snapshots for today's date.
+ * Check Polygon's market status to decide if today is a trading day.
+ * Returns true if the market has traded today (open, extended-hours, or
+ * afterHours activity).  Holidays show market='closed' with no afterHours.
+ * Fails-open so a Polygon outage never blocks the scheduler.
  */
-async function takeSnapshot(userId) {
+async function isTradingDay() {
+  const apiKey = process.env.POLYGON_API_KEY
+  if (!apiKey) return true
+  try {
+    const res = await fetch(
+      `https://api.polygon.io/v1/marketstatus/now?apiKey=${apiKey}`,
+      { signal: AbortSignal.timeout(5000) }
+    )
+    if (!res.ok) return true
+    const data = await res.json()
+    return data.market === 'open' ||
+           data.market === 'extended-hours' ||
+           data.afterHours === true ||
+           data.earlyHours === true
+  } catch {
+    return true   // fail-open: proceed on network errors
+  }
+}
+
+/**
+ * Fetch a { SYMBOL: price } map for a list of symbols in one Polygon call.
+ * Uses day.c (live close) and falls back to prevDay.c.
+ */
+async function fetchPriceMap(symbols) {
+  const apiKey = process.env.POLYGON_API_KEY
+  if (!apiKey) throw new Error('POLYGON_API_KEY not set')
+  const syms = [...new Set(symbols)].join(',')
+  const res  = await fetch(
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms}&apiKey=${apiKey}`,
+    { signal: AbortSignal.timeout(15000) }
+  )
+  if (!res.ok) throw new Error(`Polygon snapshot failed: ${res.status}`)
+  const data = await res.json()
+  const map  = {}
+  for (const t of (data.tickers ?? [])) {
+    const price = (t.day?.c > 0 ? t.day.c : null) ?? (t.prevDay?.c > 0 ? t.prevDay.c : null) ?? 0
+    if (price > 0) map[t.ticker] = price
+  }
+  return map
+}
+
+/**
+ * Core snapshot logic — shared by scheduler, on-demand endpoint, and login safety-net.
+ *
+ * @param {string}      userId
+ * @param {object|null} priceMap  Optional pre-fetched { SYMBOL: price } map from the
+ *   scheduler's batch call.  When null (on-demand / login path) this function fetches
+ *   its own prices — but first checks whether today's snapshot already exists so we
+ *   never hit Polygon unnecessarily if the scheduler already ran.
+ */
+async function takeSnapshot(userId, priceMap = null) {
+  const today = new Date().toISOString().split('T')[0]
+
   const [{ rows: holdings }, { rows: [cashRow] }] = await Promise.all([
     pool.query('SELECT symbol, shares FROM portfolio WHERE user_id = $1', [userId]),
     pool.query('SELECT cash FROM user_balances WHERE user_id = $1', [userId]),
   ])
-
   const cashBalance = parseFloat(cashRow?.cash ?? 0)
 
-  // Need at least some holdings to fetch prices — but if user only has cash
-  // (no stocks yet), still snapshot the cash balance.
+  // Safety-net path: skip if the scheduler already wrote today's snapshot.
+  if (!priceMap) {
+    const { rows: [existing] } = await pool.query(
+      'SELECT 1 FROM portfolio_snapshots WHERE user_id = $1 AND date = $2',
+      [userId, today]
+    )
+    if (existing) return null
+  }
+
+  // Cash-only portfolio
   if (!holdings.length) {
     if (cashBalance <= 0) return null
-    const today = new Date().toISOString().split('T')[0]
     await pool.query(
       `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
        VALUES ($1, $2, $3, $4)
@@ -1525,44 +1600,29 @@ async function takeSnapshot(userId) {
              breakdown   = EXCLUDED.breakdown`,
       [userId, today, cashBalance.toFixed(2), { CASH: { value: cashBalance } }]
     )
-    return { date: today, total_value: cashBalance, breakdown: { CASH: { value: cashBalance } } }
+    return { date: today, total_value: cashBalance }
   }
 
-  const symbols = holdings.map(h => h.symbol).join(',')
-  const apiKey  = process.env.POLYGON_API_KEY
-  if (!apiKey) throw new Error('POLYGON_API_KEY not set')
+  // Fetch prices if the caller didn't provide a pre-built map
+  const map = priceMap ?? await fetchPriceMap(holdings.map(h => h.symbol))
 
-  const res  = await fetch(
-    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbols}&apiKey=${apiKey}`
-  )
-  const data = await res.json()
-  const priceMap = {}
-  for (const t of (data.tickers ?? [])) {
-    const price = t.day?.c ?? t.prevDay?.c ?? 0
-    if (price > 0) priceMap[t.ticker] = price
-  }
-
-  // If Polygon returned no prices at all (weekend / market holiday / API error),
-  // skip the snapshot rather than writing a $0 record that corrupts history.
-  if (Object.keys(priceMap).length === 0) {
-    console.log(`[snapshot] No price data from Polygon (market closed?) — skipping snapshot for user ${userId}`)
+  if (Object.keys(map).length === 0) {
+    console.log(`[snapshot] No prices for user ${userId} — skipping`)
     return null
   }
 
   let holdingsValue = 0
-  const breakdown = {}
+  const breakdown   = {}
   for (const h of holdings) {
-    const price = priceMap[h.symbol] ?? 0
+    const price = map[h.symbol] ?? 0
     const value = parseFloat(h.shares) * price
     holdingsValue += value
     breakdown[h.symbol] = { shares: parseFloat(h.shares), price, value }
   }
-
-  // Include cash so total_value = cash + stocks (matches the Portfolio page display)
   if (cashBalance > 0) breakdown.CASH = { value: cashBalance }
   const totalValue = holdingsValue + cashBalance
+  if (totalValue <= 0) return null
 
-  const today = new Date().toISOString().split('T')[0]
   await pool.query(
     `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
      VALUES ($1, $2, $3, $4)
@@ -1572,103 +1632,6 @@ async function takeSnapshot(userId) {
     [userId, today, totalValue.toFixed(2), breakdown]
   )
   return { date: today, total_value: totalValue, breakdown }
-}
-
-/**
- * backfillSnapshots(userId)
- * Called fire-and-forget on every login.
- *
- * Finds the user's latest snapshot date, then fetches actual historical
- * closing prices from Polygon for every missing trading day up to yesterday,
- * and inserts retroactive snapshots so the history chart stays accurate
- * even when the user hasn't logged in for a while.
- *
- * Uses DO NOTHING so existing snapshots are never overwritten.
- */
-async function backfillSnapshots(userId) {
-  try {
-    const apiKey = process.env.POLYGON_API_KEY
-    if (!apiKey) return
-
-    const { rows: holdings } = await pool.query(
-      'SELECT symbol, shares FROM portfolio WHERE user_id = $1',
-      [userId]
-    )
-    if (!holdings.length) return
-
-    // Find the most recent snapshot date
-    const { rows: latest } = await pool.query(
-      'SELECT MAX(date) AS latest FROM portfolio_snapshots WHERE user_id = $1',
-      [userId]
-    )
-    const latestDate = latest[0]?.latest   // null if no snapshots yet
-    if (!latestDate) return               // nothing to backfill from
-
-    // Yesterday in YYYY-MM-DD (we don't backfill today — takeSnapshot handles that)
-    const yesterday = new Date(Date.now() - 864e5).toISOString().split('T')[0]
-    if (latestDate >= yesterday) return   // already up to date
-
-    // Use SPY aggregates to get the exact list of trading days in the gap
-    const spyRes = await fetch(
-      `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${latestDate}/${yesterday}` +
-      `?adjusted=true&sort=asc&limit=365&apiKey=${apiKey}`
-    )
-    const spyData = await spyRes.json()
-    const missingDays = (spyData.results ?? [])
-      .map(r => new Date(r.t).toISOString().split('T')[0])
-      .filter(d => d > latestDate)        // exclude the latestDate itself
-
-    if (!missingDays.length) return
-
-    // Fetch historical closes for each holding symbol
-    const symbols = holdings.map(h => h.symbol)
-    const pricesByDate = {}              // { 'YYYY-MM-DD': { SYMBOL: closePrice } }
-
-    for (const symbol of symbols) {
-      const r = await fetch(
-        `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${latestDate}/${yesterday}` +
-        `?adjusted=true&sort=asc&limit=365&apiKey=${apiKey}`
-      )
-      const d = await r.json()
-      for (const bar of (d.results ?? [])) {
-        const date = new Date(bar.t).toISOString().split('T')[0]
-        if (!pricesByDate[date]) pricesByDate[date] = {}
-        pricesByDate[date][symbol] = bar.c
-      }
-    }
-
-    // Insert a snapshot for each missing trading day
-    let filled = 0
-    for (const date of missingDays) {
-      const prices = pricesByDate[date]
-      if (!prices) continue
-
-      let totalValue = 0
-      const breakdown = {}
-      for (const h of holdings) {
-        const price = prices[h.symbol] ?? 0
-        const value = parseFloat(h.shares) * price
-        totalValue += value
-        breakdown[h.symbol] = { shares: parseFloat(h.shares), price, value }
-      }
-      if (totalValue === 0) continue      // no price data for this day
-
-      await pool.query(
-        `INSERT INTO portfolio_snapshots (user_id, date, total_value, breakdown)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (user_id, date) DO NOTHING`,
-        [userId, date, totalValue.toFixed(2), breakdown]
-      )
-      filled++
-    }
-
-    if (filled > 0) {
-      console.log(`[backfill] Filled ${filled} missing day(s) for user ${userId}`)
-    }
-  } catch (err) {
-    // backfill is best-effort — never let it crash login
-    console.warn('[backfill] Error:', err.message)
-  }
 }
 
 // POST /api/portfolio/snapshot — take today's snapshot (any logged-in user)
@@ -1703,11 +1666,18 @@ app.get('/api/portfolio/snapshots', async (req, res) => {
 app.post('/api/admin/snapshot-all', adminOnly, async (req, res) => {
   try {
     const { rows: users } = await pool.query('SELECT id FROM users WHERE is_disabled = false')
-    const results = await Promise.allSettled(users.map(u => takeSnapshot(u.id)))
+    const ids = users.map(u => u.id)
+    const { rows: symbolRows } = await pool.query(
+      'SELECT DISTINCT symbol FROM portfolio WHERE user_id = ANY($1)', [ids]
+    )
+    const priceMap = symbolRows.length
+      ? await fetchPriceMap(symbolRows.map(r => r.symbol))
+      : {}
+    const results   = await Promise.allSettled(ids.map(id => takeSnapshot(id, priceMap)))
     const succeeded = results.filter(r => r.status === 'fulfilled').length
     const failed    = results.filter(r => r.status === 'rejected').length
     audit(req.user.id, 'snapshot_all', { succeeded, failed }, req)
-    res.json({ succeeded, failed, total: users.length })
+    res.json({ succeeded, failed, total: ids.length })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -2100,11 +2070,12 @@ if (isProd) {
 // No external dependencies — uses only setTimeout + Intl.
 
 /**
- * Snapshot a specific list of users (by id).  Returns the ids that failed.
+ * Snapshot a list of users using a shared pre-fetched price map.
+ * Returns the ids that failed so the caller can retry them.
  */
-async function snapshotUsers(userIds, attempt, maxAttempts) {
+async function snapshotUsers(userIds, priceMap, attempt, maxAttempts) {
   console.log(`[snapshot-scheduler] Attempt ${attempt}/${maxAttempts} — snapshotting ${userIds.length} user(s)`)
-  const results = await Promise.allSettled(userIds.map(id => takeSnapshot(id)))
+  const results = await Promise.allSettled(userIds.map(id => takeSnapshot(id, priceMap)))
   const failedIds = []
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
@@ -2118,11 +2089,26 @@ async function snapshotUsers(userIds, attempt, maxAttempts) {
 }
 
 /**
- * Entry point called by the scheduler.  Fetches all active users on the
- * first run; subsequent retry calls pass only the ids that failed.
+ * Entry point called by the scheduler.
+ *
+ * First run: checks market status, fetches all active users, collects every
+ * unique symbol across all their portfolios, makes ONE Polygon call, then
+ * distributes the price map to per-user snapshot writes.
+ *
+ * Retries: re-fetches a fresh price map for only the failed users' symbols
+ * (prices may have moved in the interim) and retries those users only.
  */
 async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null } = {}) {
   try {
+    // Always check market status on the first run — skip holidays entirely.
+    if (attempt === 1) {
+      const trading = await isTradingDay()
+      if (!trading) {
+        console.log('[snapshot-scheduler] Not a trading day — skipping')
+        return
+      }
+    }
+
     let ids = userIds
     if (!ids) {
       const { rows } = await pool.query('SELECT id FROM users WHERE is_disabled = false')
@@ -2133,9 +2119,22 @@ async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null }
       return
     }
 
-    const failedIds = await snapshotUsers(ids, attempt, maxAttempts)
+    // Collect all unique symbols across the target users in one query,
+    // then fetch prices for all of them in a single Polygon call.
+    const { rows: symbolRows } = await pool.query(
+      'SELECT DISTINCT symbol FROM portfolio WHERE user_id = ANY($1)',
+      [ids]
+    )
+    const allSymbols = symbolRows.map(r => r.symbol)
+    let priceMap = {}
+    if (allSymbols.length) {
+      priceMap = await fetchPriceMap(allSymbols)
+      console.log(`[snapshot-scheduler] Fetched prices for ${Object.keys(priceMap).length}/${allSymbols.length} symbols`)
+    }
 
-    if (failedIds.length === 0) return  // all good
+    const failedIds = await snapshotUsers(ids, priceMap, attempt, maxAttempts)
+
+    if (failedIds.length === 0) return
 
     if (attempt < maxAttempts) {
       const delayMin = attempt * 5   // 5 min, then 10 min
@@ -2158,7 +2157,7 @@ async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null }
       }).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
     }
   } catch (err) {
-    // Catastrophic failure (e.g. DB down) — retry the whole run
+    // Catastrophic failure (e.g. DB down or Polygon unreachable) — retry the whole run
     console.error(`[snapshot-scheduler] Fatal error on attempt ${attempt}: ${err.message}`)
     if (attempt < maxAttempts) {
       const delayMin = attempt * 5
@@ -2391,6 +2390,228 @@ app.delete('/api/agent-portfolio', authMiddleware, async (req, res) => {
     await pool.query('DELETE FROM agent_transactions WHERE user_id=$1', [req.user.id])
     await pool.query('DELETE FROM agent_portfolio_settings WHERE user_id=$1', [req.user.id])
     res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Campaign Routes (admin only) ─────────────────────────────────
+
+// Helper: get LLM config from user settings (mirrors existing pattern)
+async function getLLMConfigForCampaign(userId) {
+  const { rows: [row] } = await pool.query(
+    `SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id = $1`,
+    [userId]
+  )
+  if (!row) return null
+  const apiKey = row.api_key_enc ? decrypt(row.api_key_enc) : null
+  return { provider: row.provider, model: row.model, apiKey }
+}
+
+// List all campaigns
+app.get('/api/admin/campaigns', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT c.*, u.name AS creator_name
+       FROM campaigns c
+       LEFT JOIN users u ON u.id = c.created_by
+       ORDER BY c.created_at DESC`
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Create a new draft campaign
+app.post('/api/admin/campaigns', requireRole('admin'), async (req, res) => {
+  const { title, audience_desc, audience_filter, subject, compose_mode,
+          body_template, ai_prompt, scheduled_at } = req.body
+  if (!title) return res.status(400).json({ error: 'title required' })
+  try {
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO campaigns
+         (title, status, audience_desc, audience_filter, subject,
+          compose_mode, body_template, ai_prompt, scheduled_at, created_by)
+       VALUES ($1, 'draft', $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [title, audience_desc ?? null,
+       audience_filter ? JSON.stringify(audience_filter) : null,
+       subject ?? null,
+       compose_mode ?? 'manual',
+       body_template ?? null,
+       ai_prompt ?? null,
+       scheduled_at ?? null,
+       req.user.id]
+    )
+    res.status(201).json(row)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Get single campaign
+app.get('/api/admin/campaigns/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT c.*, u.name AS creator_name
+       FROM campaigns c LEFT JOIN users u ON u.id = c.created_by
+       WHERE c.id = $1`,
+      [req.params.id]
+    )
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    res.json(row)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Update a draft campaign
+app.patch('/api/admin/campaigns/:id', requireRole('admin'), async (req, res) => {
+  const { title, audience_desc, audience_filter, subject, compose_mode,
+          body_template, ai_prompt, scheduled_at } = req.body
+  try {
+    const { rows: [row] } = await pool.query(
+      `UPDATE campaigns SET
+         title           = COALESCE($2, title),
+         audience_desc   = COALESCE($3, audience_desc),
+         audience_filter = COALESCE($4, audience_filter),
+         subject         = COALESCE($5, subject),
+         compose_mode    = COALESCE($6, compose_mode),
+         body_template   = COALESCE($7, body_template),
+         ai_prompt       = COALESCE($8, ai_prompt),
+         scheduled_at    = $9,
+         updated_at      = NOW()
+       WHERE id = $1 AND status = 'draft'
+       RETURNING *`,
+      [req.params.id, title, audience_desc,
+       audience_filter ? JSON.stringify(audience_filter) : null,
+       subject, compose_mode, body_template, ai_prompt,
+       scheduled_at ?? null]
+    )
+    if (!row) return res.status(404).json({ error: 'Draft not found' })
+    res.json(row)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Delete a draft campaign
+app.delete('/api/admin/campaigns/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM campaigns WHERE id = $1 AND status = 'draft'`,
+      [req.params.id]
+    )
+    if (!rowCount) return res.status(404).json({ error: 'Draft not found' })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Preview audience (returns matching users + count, no send)
+app.post('/api/admin/campaigns/:id/preview', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows: [campaign] } = await pool.query(
+      'SELECT * FROM campaigns WHERE id = $1', [req.params.id]
+    )
+    if (!campaign) return res.status(404).json({ error: 'Not found' })
+
+    const filter = campaign.audience_filter ?? { conditions: [] }
+    const users  = await resolveAudience(filter)
+    res.json({
+      count: users.length,
+      users: users.map(u => ({
+        id: u.id, name: u.name, email: u.email,
+        portfolio_value: u.portfolio_value,
+        cash_balance: u.cash_balance,
+        trade_count: u.trade_count,
+        top_holding: u.top_holding,
+      })),
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Preview a single AI-generated email (uses first matching recipient)
+app.post('/api/admin/campaigns/:id/preview-email', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows: [campaign] } = await pool.query(
+      'SELECT * FROM campaigns WHERE id = $1', [req.params.id]
+    )
+    if (!campaign) return res.status(404).json({ error: 'Not found' })
+    if (campaign.compose_mode !== 'ai') return res.status(400).json({ error: 'Only available in AI mode' })
+
+    const filter = campaign.audience_filter ?? { conditions: [] }
+    const users  = await resolveAudience(filter)
+    if (!users.length) return res.status(422).json({ error: 'No matching recipients' })
+
+    const llmConfig = await getLLMConfigForCampaign(req.user.id)
+    if (!llmConfig) return res.status(422).json({ error: 'No LLM configured' })
+
+    const previewUser = users[0]
+    const body = await generateAIBody(campaign.ai_prompt, previewUser, llmConfig)
+    const subject = resolveTokens(campaign.subject ?? '', previewUser)
+
+    res.json({
+      recipient: { name: previewUser.name, email: previewUser.email },
+      subject,
+      body,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Parse audience natural language → filter JSON
+app.post('/api/admin/campaigns/parse-audience', requireRole('admin'), async (req, res) => {
+  const { description } = req.body
+  if (!description) return res.status(400).json({ error: 'description required' })
+  try {
+    const llmConfig = await getLLMConfigForCampaign(req.user.id)
+    if (!llmConfig) return res.status(422).json({ error: 'No LLM configured' })
+
+    const filter = await parseAudienceDescription(description, llmConfig)
+    const users  = await resolveAudience(filter)
+    res.json({ filter, count: users.length, users: users.slice(0, 20).map(u => ({
+      id: u.id, name: u.name, email: u.email, portfolio_value: u.portfolio_value,
+    })) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Send campaign now
+app.post('/api/admin/campaigns/:id/send', requireRole('admin'), async (req, res) => {
+  try {
+    const llmConfig = await getLLMConfigForCampaign(req.user.id)
+    const result    = await executeCampaign(req.params.id, llmConfig)
+    audit(req.user.id, 'campaign_sent', { campaignId: req.params.id, ...result }, req)
+    res.json(result)
+  } catch (err) {
+    // Mark campaign as failed if it errored during execution
+    await pool.query(
+      "UPDATE campaigns SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status = 'sending'",
+      [req.params.id]
+    ).catch(() => {})
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Get send history for a campaign
+app.get('/api/admin/campaigns/:id/sends', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.*, u.name, u.email
+       FROM campaign_sends cs
+       JOIN users u ON u.id = cs.user_id
+       WHERE cs.campaign_id = $1
+       ORDER BY cs.sent_at DESC NULLS LAST`,
+      [req.params.id]
+    )
+    res.json(rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

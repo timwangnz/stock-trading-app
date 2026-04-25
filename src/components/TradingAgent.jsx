@@ -8,8 +8,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { Bot, Send, TrendingUp, TrendingDown, Trash2, Sparkles,
          ChevronDown, ChevronUp, Newspaper, ExternalLink, Zap,
-         CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+         CheckCircle2, XCircle, AlertTriangle, KeyRound } from 'lucide-react'
 import clsx from 'clsx'
+import { useKeys } from '../context/KeysContext'
+import { useApp, ACTIONS } from '../context/AppContext'
 
 // ── Types ────────────────────────────────────────────────────────
 // embedded={true}  → fills the parent panel, no collapsible header
@@ -288,6 +290,8 @@ const SUGGESTIONS = [
 
 // ── Main component ───────────────────────────────────────────────
 export default function TradingAgent({ portfolio, onTradeExecuted, embedded = false }) {
+  const { llmConfigured } = useKeys()
+  const { dispatch }      = useApp()
   const [open,     setOpen]     = useState(false)
   const [input,    setInput]    = useState('')
   const [messages, setMessages] = useState([
@@ -427,6 +431,19 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
   if (embedded) {
     return (
       <div className="flex flex-col h-full">
+        {/* LLM not-configured notice */}
+        {!llmConfigured && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-yellow-400/8 border-b border-yellow-400/20 text-yellow-400 text-xs shrink-0">
+            <KeyRound size={12} className="shrink-0" />
+            No AI provider configured —{' '}
+            <button
+              onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+              className="underline hover:no-underline"
+            >
+              Set up in My Keys →
+            </button>
+          </div>
+        )}
         {/* Message list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {messages.map(m => (
@@ -524,6 +541,20 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
   // ── Standalone card mode ─────────────────────────────────────────
   return (
     <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+
+      {/* LLM not-configured notice */}
+      {!llmConfigured && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-yellow-400/8 border-b border-yellow-400/20 text-yellow-400 text-xs">
+          <KeyRound size={12} className="shrink-0" />
+          No AI provider configured —{' '}
+          <button
+            onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+            className="underline hover:no-underline"
+          >
+            Set up in My Keys →
+          </button>
+        </div>
+      )}
 
       {/* Header / toggle */}
       <button

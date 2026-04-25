@@ -11,12 +11,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Bot, Play, Pause, RotateCcw, Settings,
   Clock, Zap, ChevronDown, ChevronUp, AlertCircle, CheckCircle2,
-  Sparkles, RefreshCw, DollarSign, TrendingUp, ChevronsUpDown,
+  Sparkles, RefreshCw, DollarSign, TrendingUp, ChevronsUpDown, KeyRound,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useLivePrices } from '../hooks/useLivePrices'
 import StockTreemap from '../components/StockTreemap'
 import { useApp, ACTIONS } from '../context/AppContext'
+import { useKeys } from '../context/KeysContext'
 
 const API = (path, opts = {}) => {
   const token = localStorage.getItem('tradebuddy_token')
@@ -724,6 +725,8 @@ function Dashboard({ state, onRefresh }) {
 
 // ── Root component ────────────────────────────────────────────────
 export default function AgentPortfolio() {
+  const { llmConfigured } = useKeys()
+  const { dispatch }      = useApp()
   const [state,   setState]   = useState(null)   // null = loading
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState(null)
@@ -756,7 +759,31 @@ export default function AgentPortfolio() {
     </div>
   )
 
-  if (!state?.configured) return <SetupWizard onSetup={load} />
+  // LLM notice banner (shown at top of any state)
+  const LLMNotice = !llmConfigured ? (
+    <div className="flex items-center gap-2 px-6 py-2.5 bg-yellow-400/8 border-b border-yellow-400/20 text-yellow-400 text-xs">
+      <KeyRound size={12} className="shrink-0" />
+      No AI provider configured — the AI portfolio agent requires an LLM to run.{' '}
+      <button
+        onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+        className="underline hover:no-underline"
+      >
+        Set up in My Keys →
+      </button>
+    </div>
+  ) : null
 
-  return <Dashboard state={state} onRefresh={load} />
+  if (!state?.configured) return (
+    <>
+      {LLMNotice}
+      <SetupWizard onSetup={load} />
+    </>
+  )
+
+  return (
+    <>
+      {LLMNotice}
+      <Dashboard state={state} onRefresh={load} />
+    </>
+  )
 }

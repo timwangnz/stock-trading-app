@@ -1,4 +1,14 @@
-# Environment variables — never commit these
+# ── Internal docs — never publish these ──────────────────────────
+ROADMAP.md
+CLAUDE.md
+SNAPSHOTS_DESIGN.md
+DEPLOY.md
+SETUP.md
+DOCKER.md
+marketing.md
+TradeBuddy-User-Guide.md
+
+# ── Environment variables — never commit these ────────────────────
 .env
 .env.local
 .env.*.local

@@ -33,7 +33,21 @@ function hasRole(userRole, requiredRole) {
 export function AuthProvider({ children }) {
   const [user,     setUser]     = useState(null)
   const [loading,  setLoading]  = useState(true)  // true while restoring session
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || 'teacher')
+
+  // Default viewMode based on the saved user's role:
+  //   admin   → 'admin'   (primary duty is platform management)
+  //   teacher → 'teacher' (primary duty is classroom)
+  //   others  → 'trading'
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem(VIEW_MODE_KEY)
+    if (saved) return saved
+    try {
+      const u = JSON.parse(localStorage.getItem(USER_KEY) || '{}')
+      if (u.role === 'admin')   return 'admin'
+      if (u.role === 'teacher') return 'teacher'
+    } catch { /* ignore */ }
+    return 'trading'
+  })
 
   // ── Restore session from localStorage on first load ──────────
   useEffect(() => {
@@ -103,12 +117,27 @@ export function AuthProvider({ children }) {
   }, [saveSession])
 
   /**
-   * Toggle between 'teacher' and 'student' view mode (teacher/admin only).
-   * Persisted in localStorage so it survives page refresh.
+   * Cycle view mode — persisted in localStorage.
+   *
+   * Admin + Teacher: 'admin' → 'teacher' → 'trading' → 'admin'
+   * Admin only:      'admin' ↔ 'trading'
+   * Teacher only:    'teacher' ↔ 'trading'
    */
-  const toggleViewMode = useCallback(() => {
+  const toggleViewMode = useCallback((currentUser) => {
+    const isAdminRole   = currentUser?.role === 'admin'
+    const isTeacherRole = currentUser?.role === 'teacher' || isAdminRole
+
     setViewMode(prev => {
-      const next = prev === 'teacher' ? 'student' : 'teacher'
+      let next
+      if (isAdminRole && isTeacherRole) {
+        if (prev === 'admin')        next = 'teacher'
+        else if (prev === 'teacher') next = 'trading'
+        else                         next = 'admin'
+      } else if (isAdminRole) {
+        next = prev === 'admin' ? 'trading' : 'admin'
+      } else {
+        next = prev === 'teacher' ? 'trading' : 'teacher'
+      }
       localStorage.setItem(VIEW_MODE_KEY, next)
       return next
     })
@@ -140,13 +169,22 @@ export function AuthProvider({ children }) {
   const isStudent  = role === 'student'                   // only set via joinClassWithToken
   const isReadonly = !!user && !hasRole(role, 'user')     // view-only
 
-  // Effective view mode: only meaningful for teachers/admins; everyone else is always 'student'
-  const effectiveViewMode = isTeacher ? viewMode : 'student'
+  // Effective view mode — normalised to valid states per role
+  const effectiveViewMode = isAdmin
+    ? (['admin', 'teacher', 'trading'].includes(viewMode) ? viewMode : 'admin')
+    : isTeacher
+      ? (['teacher', 'trading'].includes(viewMode) ? viewMode : 'teacher')
+      : 'trading'
+
+  // Expose the raw JWT so components that do their own fetch() can use it.
+  // Components that use apiService.js functions don't need this — the token
+  // is pre-loaded there via setAuthToken().
+  const token = localStorage.getItem(TOKEN_KEY)
 
   return (
     <AuthContext.Provider value={{
       user, loading, login, loginWithToken, signUp, signIn, logout,
-      joinClassWithToken,
+      joinClassWithToken, token,
       role, canTrade, isAdmin, isTeacher, isStudent, isReadonly,
       viewMode: effectiveViewMode, toggleViewMode,
     }}>

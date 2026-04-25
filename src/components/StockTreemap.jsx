@@ -56,8 +56,8 @@ function TreemapTooltip({ active, payload, labelFormatter }) {
 // ── Cell ──────────────────────────────────────────────────────
 function TreemapCell({ x, y, width, height, symbol, changePct, price,
                        clampRange, onCellClick }) {
-  if (width < 18 || height < 18) return null
-
+  // Always render a rect to suppress Recharts' default cell rendering,
+  // even for tiny cells — just fill with the background colour and no text.
   const bg      = changePctToColor(changePct, clampRange)
   const isUp    = (changePct ?? 0) >= 0
   const pctText = `${isUp ? '+' : ''}${(changePct ?? 0).toFixed(2)}%`
@@ -65,16 +65,24 @@ function TreemapCell({ x, y, width, height, symbol, changePct, price,
   const area       = width * height
   const symbolSize = Math.max(10, Math.min(17, Math.sqrt(area) / 5))
   const pctSize    = Math.max(8,  Math.min(13, symbolSize - 2))
-  const showPct    = area > 1000
+  const showPct    = area > 1000 && width > 40 && height > 30
   const showPrice  = area > 5000
 
+  // Unique clip-path id to prevent text overflowing into adjacent cells
+  const clipId = `tc-${symbol}-${Math.round(x)}-${Math.round(y)}`
+
   return (
-    <g onClick={() => onCellClick?.(symbol)} style={{ cursor: 'pointer' }}>
-      <rect x={x+1} y={y+1} width={width-2} height={height-2} fill={bg} rx={4} />
-      <rect x={x+1} y={y+1} width={width-2} height={height-2}
+    <g onClick={() => onCellClick?.(symbol)} style={{ cursor: onCellClick ? 'pointer' : 'default' }}>
+      <defs>
+        <clipPath id={clipId}>
+          <rect x={x+1} y={y+1} width={Math.max(0, width-2)} height={Math.max(0, height-2)} rx={4} />
+        </clipPath>
+      </defs>
+      <rect x={x+1} y={y+1} width={Math.max(0, width-2)} height={Math.max(0, height-2)} fill={bg} rx={4} />
+      <rect x={x+1} y={y+1} width={Math.max(0, width-2)} height={Math.max(0, height-2)}
             fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={1} rx={4} />
       {showPct && (
-        <>
+        <g clipPath={`url(#${clipId})`}>
           <text x={x + width/2} y={y + height/2 - pctSize * 0.6}
                 textAnchor="middle" dominantBaseline="middle"
                 fontSize={symbolSize} fontWeight="700"
@@ -94,7 +102,7 @@ function TreemapCell({ x, y, width, height, symbol, changePct, price,
               ${Number(price).toFixed(2)}
             </text>
           )}
-        </>
+        </g>
       )}
     </g>
   )
@@ -146,16 +154,22 @@ export default function StockTreemap({
           dataKey="size"
           aspectRatio={4 / 3}
           isAnimationActive={false}
-          content={(props) => (
-            <TreemapCell
-              {...props}
-              symbol={props.symbol ?? props.name}
-              changePct={props.changePct}
-              price={props.price}
-              clampRange={clampRange}
-              onCellClick={onCellClick}
-            />
-          )}
+          content={(props) => {
+            const sym = props.symbol ?? props.name
+            // Recharts also calls content() for the invisible root/container node
+            // which has no symbol — skip it to avoid phantom text in the SVG.
+            if (!sym) return <g />
+            return (
+              <TreemapCell
+                {...props}
+                symbol={sym}
+                changePct={props.changePct}
+                price={props.price}
+                clampRange={clampRange}
+                onCellClick={onCellClick}
+              />
+            )
+          }}
         >
           <Tooltip content={<TreemapTooltip />} />
         </Treemap>

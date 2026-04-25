@@ -5,10 +5,11 @@
  */
 
 import { useState } from 'react'
-import { Bot, Sun, Moon, Menu } from 'lucide-react'
+import { Bot, Sun, Moon, Menu, KeyRound } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import { useTheme } from '../../context/ThemeContext'
+import { useKeys } from '../../context/KeysContext'
 import StockSearch from '../StockSearch'
 import UserMenu from '../UserMenu'
 
@@ -24,6 +25,7 @@ export default function Header({ agentOpen, onToggleAgent, onMenuClick }) {
   const { state, dispatch } = useApp()
   const { canTrade } = useAuth()
   const { isDark, toggleTheme } = useTheme()
+  const { llmConfigured } = useKeys()
   const [searchKey, setSearchKey] = useState(0)  // bump to reset StockSearch after selection
 
   const handleSelect = (symbol) => {
@@ -80,19 +82,27 @@ export default function Header({ agentOpen, onToggleAgent, onMenuClick }) {
       {/* Trading Agent toggle — only for users who can trade */}
       {canTrade && (
         <button
-          onClick={onToggleAgent}
-          title="Trading Agent"
+          onClick={llmConfigured
+            ? onToggleAgent
+            : () => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+          title={llmConfigured ? 'Trading Agent' : 'No AI provider configured — click to set up'}
           className={`
             relative p-2 rounded-lg transition-colors
-            ${agentOpen
+            ${!llmConfigured
+              ? 'text-yellow-400/60 hover:text-yellow-400 hover:bg-yellow-400/10 cursor-pointer'
+              : agentOpen
               ? 'bg-accent-blue/20 text-accent-blue'
               : 'text-muted hover:text-primary hover:bg-surface-hover'}
           `}
         >
           <Bot size={18} />
           {/* Active dot */}
-          {agentOpen && (
+          {agentOpen && llmConfigured && (
             <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-accent-blue" />
+          )}
+          {/* Warning dot when no LLM */}
+          {!llmConfigured && (
+            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-yellow-400" />
           )}
         </button>
       )}

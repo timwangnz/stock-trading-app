@@ -526,6 +526,52 @@ async function setup() {
   `)
   console.log('✅ Table "saved_prompts" ready')
 
+  // ── campaigns ─────────────────────────────────────────────────
+  // Marketing campaign definitions. Admin-only.
+  // compose_mode: 'manual' = {{token}} substitution, 'ai' = LLM generates body per user
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id               BIGSERIAL     PRIMARY KEY,
+      title            VARCHAR(255)  NOT NULL,
+      status           VARCHAR(20)   NOT NULL DEFAULT 'draft'
+                       CHECK (status IN ('draft','sending','sent','scheduled','failed')),
+      audience_desc    TEXT          NULL,
+      audience_filter  JSONB         NOT NULL DEFAULT '{"logic":"AND","conditions":[]}',
+      subject          VARCHAR(500)  NOT NULL DEFAULT '',
+      compose_mode     VARCHAR(10)   NOT NULL DEFAULT 'manual'
+                       CHECK (compose_mode IN ('manual','ai')),
+      body_template    TEXT          NOT NULL DEFAULT '',
+      ai_prompt        TEXT          NULL,
+      scheduled_at     TIMESTAMPTZ   NULL,
+      sent_at          TIMESTAMPTZ   NULL,
+      recipient_count  INTEGER       NOT NULL DEFAULT 0,
+      created_by       VARCHAR(50)   NOT NULL REFERENCES users(id),
+      created_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_campaigns_status     ON campaigns (status)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_campaigns_created_by ON campaigns (created_by)`)
+  console.log('✅ Table "campaigns" ready')
+
+  // ── campaign_sends ────────────────────────────────────────────
+  // One row per recipient per campaign — tracks delivery status.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS campaign_sends (
+      id           BIGSERIAL    PRIMARY KEY,
+      campaign_id  BIGINT       NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      user_id      VARCHAR(50)  NOT NULL REFERENCES users(id)     ON DELETE CASCADE,
+      status       VARCHAR(10)  NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','sent','failed')),
+      error        TEXT         NULL,
+      sent_at      TIMESTAMPTZ  NULL,
+      UNIQUE (campaign_id, user_id)
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_campaign_sends_campaign ON campaign_sends (campaign_id)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_campaign_sends_user     ON campaign_sends (user_id)`)
+  console.log('✅ Table "campaign_sends" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

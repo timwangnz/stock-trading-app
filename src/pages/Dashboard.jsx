@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
-import { ArrowUpRight, ArrowDownRight, Activity, RefreshCw, Briefcase, ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { ArrowUpRight, ArrowDownRight, Activity, RefreshCw, Briefcase, ChevronRight, SlidersHorizontal, KeyRound } from 'lucide-react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import StockTreemap from '../components/StockTreemap'
 import { getSnapshots } from '../services/polygonApi'
@@ -20,6 +20,7 @@ import StockCard from '../components/StockCard'
 import ManageStocksModal from '../components/ManageStocksModal'
 import MarketHeatmap from '../components/MarketHeatmap'
 import { LoadingSpinner, ErrorMessage } from '../components/LoadingSpinner'
+import { useKeys } from '../context/KeysContext'
 import clsx from 'clsx'
 
 function StatBadge({ label, value, trend }) {
@@ -233,6 +234,7 @@ function PortfolioSummary({ onNavigate }) {
 
 export default function Dashboard() {
   const { state, dispatch }               = useApp()
+  const { llmConfigured }                 = useKeys()
   const { symbols, addCustom, removeCustom } = useDashboardSymbols()
 
   // ── State ──────────────────────────────────────────────────
@@ -289,6 +291,22 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
+
+      {/* ── LLM setup nudge ───────────────────────────── */}
+      {!llmConfigured && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-yellow-400/8 border border-yellow-400/20 rounded-xl text-yellow-400 text-sm">
+          <KeyRound size={15} className="shrink-0" />
+          <span>
+            No AI provider configured — the Trading Agent, Prompt Manager, and AI Portfolio won't work until you add a key.{' '}
+            <button
+              onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+              className="underline hover:no-underline font-medium"
+            >
+              Set up in My Keys →
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* ── Portfolio summary (hidden if portfolio is empty) ── */}
       <PortfolioSummary onNavigate={(page) => dispatch({ type: ACTIONS.NAVIGATE, payload: page })} />

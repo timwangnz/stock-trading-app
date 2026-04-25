@@ -25,6 +25,8 @@ import Groups        from './pages/Groups'
 import PromptManager     from './pages/PromptManager'
 import CustomerProfile  from './pages/CustomerProfile'
 import AgentPortfolio   from './pages/AgentPortfolio'
+import Campaigns        from './pages/Campaigns'
+import Settings         from './pages/Settings'
 
 const PAGES = {
   dashboard:       Dashboard,
@@ -40,6 +42,8 @@ const PAGES = {
   promptmanager:   PromptManager,
   customerprofile: CustomerProfile,
   agentportfolio:  AgentPortfolio,
+  campaigns:       Campaigns,
+  settings:        Settings,
 }
 
 // Read URL params once at module load (before any re-renders strip them)
@@ -90,9 +94,10 @@ export default function App() {
   // Not signed in → show login page
   if (!user) return <Login />
 
-  // Resolve page — block non-admins from reaching the admin panel
+  // Resolve page — block non-admins from admin-only pages
   const requestedPage = state.currentPage
-  const resolvedPage  = requestedPage === 'admin' && !isAdmin ? 'dashboard' : requestedPage
+  const isAdminPage   = requestedPage === 'admin' || requestedPage === 'campaigns'
+  const resolvedPage  = isAdminPage && !isAdmin ? 'dashboard' : requestedPage
   const PageComponent = PAGES[resolvedPage] ?? Dashboard
 
   return (

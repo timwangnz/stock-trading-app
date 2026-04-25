@@ -3,20 +3,40 @@
 # TradeBuddy — install.sh
 # One-command local installer for macOS (and Linux).
 #
-# Usage:
-#   bash install.sh
+# Can be run as a single curl command on a brand new machine:
+#   curl -fsSL https://raw.githubusercontent.com/timwangnz/stock-trading-app/main/install.sh | bash
 #
 # What it does:
-#   1. Checks Docker is installed and running
-#   2. Asks for your API keys interactively
-#   3. Generates all secrets automatically
-#   4. Writes .env
-#   5. Pulls and starts the app with docker compose
-#   6. Schedules a daily midnight backup to ~/Documents/TradeBuddy-Backups/
-#   7. Opens http://localhost:3001 in your browser
+#   1. Downloads docker-compose.yml and backup.sh if not already present
+#   2. Checks Docker is installed and running
+#   3. Asks for your API keys interactively
+#   4. Generates all secrets automatically
+#   5. Writes .env
+#   6. Pulls and starts the app with docker compose
+#   7. Schedules a daily midnight backup to ~/Documents/TradeBuddy-Backups/
+#   8. Opens http://localhost:3001 in your browser
 # ─────────────────────────────────────────────────────────────────
 
 set -e
+
+# ── Self-bootstrap ────────────────────────────────────────────────
+# When run via curl | bash, the companion files won't exist yet.
+# Download them from GitHub before doing anything else.
+REPO_RAW="https://raw.githubusercontent.com/timwangnz/stock-trading-app/main"
+
+# Work in a stable directory — ~/tradebuddy — so files aren't lost
+# when the shell exits after a piped run.
+INSTALL_DIR="$HOME/tradebuddy"
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+
+for FILE in docker-compose.yml backup.sh; do
+  if [ ! -f "$FILE" ]; then
+    echo "Downloading $FILE…"
+    curl -fsSL "$REPO_RAW/$FILE" -o "$FILE"
+  fi
+done
+chmod +x backup.sh
 
 # ── Colours ───────────────────────────────────────────────────────
 BOLD="\033[1m"
@@ -264,7 +284,7 @@ fi
 # ── Step 6: Set up daily backup ───────────────────────────────────
 print_header "Step 6 — Setting up daily backup"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$INSTALL_DIR"
 BACKUP_SCRIPT="$SCRIPT_DIR/backup.sh"
 BACKUP_DIR="$HOME/Documents/TradeBuddy-Backups"
 

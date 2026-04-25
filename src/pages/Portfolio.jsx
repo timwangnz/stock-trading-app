@@ -21,6 +21,8 @@ import clsx from 'clsx'
 
 // StockSearchInput is now the shared StockSearch component (see components/StockSearch.jsx)
 
+const fmt$ = (n) => Number(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 // ── Portfolio performance chart ───────────────────────────────────
 
 const CHART_RANGES = [
@@ -862,15 +864,15 @@ export default function Portfolio() {
                         </button>
                       </td>
                       <td className="text-right px-5 py-3 text-secondary">{h.shares}</td>
-                      <td className="text-right px-5 py-3 text-secondary">${h.avgCost.toFixed(2)}</td>
-                      <td className="text-right px-5 py-3 text-primary">${h.price.toFixed(2)}</td>
+                      <td className="text-right px-5 py-3 text-secondary">${fmt$(h.avgCost)}</td>
+                      <td className="text-right px-5 py-3 text-primary">${fmt$(h.price)}</td>
                       <td className="text-right px-5 py-3">
                         {(() => {
                           const dayPL = h.changePct !== 0 ? h.value - h.value / (1 + h.changePct / 100) : 0
                           return (
                             <>
                               <p className={clsx('font-medium text-sm', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
-                                {h.changePct >= 0 ? '+' : ''}${dayPL.toFixed(2)}
+                                {h.changePct >= 0 ? '+' : ''}${fmt$(dayPL)}
                               </p>
                               <p className={clsx('text-xs', h.changePct >= 0 ? 'text-gain' : 'text-loss')}>
                                 {h.changePct >= 0 ? '+' : ''}{h.changePct.toFixed(2)}%
@@ -880,11 +882,11 @@ export default function Portfolio() {
                         })()}
                       </td>
                       <td className="text-right px-5 py-3 text-primary font-medium">
-                        ${h.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${fmt$(h.value)}
                       </td>
                       <td className="text-right px-5 py-3">
                         <p className={clsx('font-medium', h.gain >= 0 ? 'text-gain' : 'text-loss')}>
-                          {h.gain >= 0 ? '+' : ''}${h.gain.toFixed(2)}
+                          {h.gain >= 0 ? '+' : ''}${fmt$(h.gain)}
                         </p>
                         <p className={clsx('text-xs', h.gainPct >= 0 ? 'text-gain' : 'text-loss')}>
                           {h.gainPct >= 0 ? '+' : ''}{h.gainPct.toFixed(2)}%

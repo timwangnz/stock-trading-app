@@ -16,8 +16,10 @@ import {
   Wand2, Plus, Trash2, Edit2, X, ToggleLeft, ToggleRight,
   Loader2, AlertCircle, CheckCircle2, Play, Copy,
   Lightbulb, Tag, Plug, ChevronRight, ChevronDown,
-  Info, BookOpen, Terminal, Clock, Mail,
+  Info, BookOpen, Terminal, Clock, Mail, KeyRound,
 } from 'lucide-react'
+import { useKeys } from '../context/KeysContext'
+import { useApp, ACTIONS } from '../context/AppContext'
 import FinancialsPanel from '../components/FinancialsPanel'
 import {
   fetchAgentContext, createAgentContext, updateAgentContext, deleteAgentContext,
@@ -1071,6 +1073,8 @@ Market: {{market_status}}
 // ── Main Page ─────────────────────────────────────────────────────
 
 export default function PromptManager() {
+  const { llmConfigured } = useKeys()
+  const { dispatch }      = useApp()
   const [activeTab, setActiveTab] = useState('prompts')
 
   // Prompts state
@@ -1176,6 +1180,20 @@ export default function PromptManager() {
 
   return (
     <div className="flex flex-col h-full">
+
+      {/* LLM not-configured notice */}
+      {!llmConfigured && (
+        <div className="flex items-center gap-2 px-6 py-2.5 bg-yellow-400/8 border-b border-yellow-400/20 text-yellow-400 text-xs shrink-0">
+          <KeyRound size={12} className="shrink-0" />
+          No AI provider configured — prompts will fail to run.{' '}
+          <button
+            onClick={() => dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' })}
+            className="underline hover:no-underline"
+          >
+            Set up in My Keys →
+          </button>
+        </div>
+      )}
 
       {/* Page header */}
       <div className="flex items-center justify-between px-6 py-5 border-b border-border shrink-0">

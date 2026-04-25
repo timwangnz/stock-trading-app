@@ -6,13 +6,15 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { LogOut, UserCircle } from 'lucide-react'
+import { LogOut, UserCircle, KeyRound } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useApp, ACTIONS } from '../context/AppContext'
+import { useKeys } from '../context/KeysContext'
 
 export default function UserMenu() {
   const { user, logout }    = useAuth()
   const { dispatch }        = useApp()
+  const { llmConfigured }   = useKeys()
   const [open, setOpen]   = useState(false)
   const menuRef           = useRef(null)
 
@@ -71,6 +73,17 @@ export default function UserMenu() {
           >
             <UserCircle size={14} />
             Customer Profile
+          </button>
+
+          <button
+            onClick={() => { setOpen(false); dispatch({ type: ACTIONS.NAVIGATE, payload: 'settings' }) }}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted hover:text-primary hover:bg-surface-hover transition-colors"
+          >
+            <KeyRound size={14} />
+            My Keys
+            {!llmConfigured && (
+              <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400 shrink-0" title="No AI provider configured" />
+            )}
           </button>
 
           <div className="border-t border-border" />
