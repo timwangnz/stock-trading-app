@@ -31,6 +31,7 @@ async function request(method, path, body) {
     const text = await res.text()
     throw new Error(`API ${method} ${path} → ${res.status}: ${text}`)
   }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return null
   return res.json()
 }
 
@@ -306,4 +307,87 @@ export function fetchCustomerProfile() {
  */
 export function saveCustomerProfile(profile) {
   return request('PUT', '/customer-profile', profile)
+}
+
+// ── Agent Context (Knowledge Base) ───────────────────────────────
+
+/** List all agent context entries for the current user */
+export function fetchAgentContext() {
+  return request('GET', '/agent-context')
+}
+
+/** Create a new context entry */
+export function createAgentContext(entry) {
+  return request('POST', '/agent-context', entry)
+}
+
+/** Toggle enabled / update fields on an existing entry */
+export function updateAgentContext(id, patch) {
+  return request('PATCH', `/agent-context/${id}`, patch)
+}
+
+/** Delete a context entry */
+export function deleteAgentContext(id) {
+  return request('DELETE', `/agent-context/${id}`)
+}
+
+// ── MCP Servers (for dataset configurator) ───────────────────────
+
+/** List the user's connected MCP servers with their tools */
+export async function fetchMCPServersWithTools() {
+  const token = localStorage.getItem('tradebuddy_token')
+  // Fetch servers list
+  const servers = await request('GET', '/mcp-servers')
+  // Fetch tools for each enabled server in parallel
+  const withTools = await Promise.all(
+    servers.filter(s => s.enabled).map(async s => {
+      try {
+        const res = await fetch(`/api/mcp-servers/${s.id}/test`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const data = await res.json()
+        return { ...s, tools: data.toolNames ?? [] }
+      } catch {
+        return { ...s, tools: [] }
+      }
+    })
+  )
+  return withTools
+}
+
+// ── Saved Prompts ─────────────────────────────────────────────────
+
+/** List saved prompts for the current user */
+export function fetchSavedPrompts() {
+  return request('GET', '/saved-prompts')
+}
+
+/** Save a new prompt (title, description, message, context_snap, include_live_data) */
+export function createSavedPrompt(prompt) {
+  return request('POST', '/saved-prompts', prompt)
+}
+
+/** Update a saved prompt */
+export function updateSavedPrompt(id, patch) {
+  return request('PATCH', `/saved-prompts/${id}`, patch)
+}
+
+/** Delete a saved prompt */
+export function deleteSavedPrompt(id) {
+  return request('DELETE', `/saved-prompts/${id}`)
+}
+
+/** Run a saved prompt through the stateless token runner */
+export function runSavedPrompt(id) {
+  return request('POST', `/saved-prompts/${id}/run`, {})
+}
+
+/** Run an ad-hoc template string (not yet saved) */
+export function runPromptTemplate(template) {
+  return request('POST', '/prompts/run', { template })
+}
+
+/** Validate @tokens and {{vars}} in a template — returns { errors, tokenCount } */
+export function validatePromptTemplate(template) {
+  return request('POST', '/prompts/validate', { template })
 }

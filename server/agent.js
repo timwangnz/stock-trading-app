@@ -347,8 +347,43 @@ async function removeStock(userId, symbol, price = 0) {
  * @param {Array}  opts.portfolio
  * @param {object} opts.llmConfig   - { provider, model, apiKey }
  * @param {Array}  opts.mcpServers  - rows from mcp_servers with tool definitions attached
+ * @param {Array}  opts.userContext - enabled rows from agent_context (instructions, ticker notes, MCP rules)
  */
-export async function runTradingAgent({ userId, message, portfolio, llmConfig = {}, mcpServers = [] }) {
+
+/**
+ * Build the [User Knowledge Base] block injected into the system prompt.
+ */
+function buildUserContextBlock(userContext = []) {
+  if (!userContext || userContext.length === 0) return ''
+
+  const instructions = userContext.filter(e => e.type === 'instruction')
+  const tickerNotes  = userContext.filter(e => e.type === 'ticker_note')
+  const mcpRules     = userContext.filter(e => e.type === 'mcp_rule')
+
+  const parts = []
+
+  if (instructions.length > 0) {
+    parts.push('AGENT INSTRUCTIONS (follow these rules when reasoning and trading):')
+    instructions.forEach(e => parts.push(`• [${e.title}] ${e.content}`))
+  }
+
+  if (tickerNotes.length > 0) {
+    parts.push('\nTICKER CONTEXT (user-defined notes on specific stocks):')
+    tickerNotes.forEach(e => {
+      const sym = e.ticker ? `${e.ticker} — ` : ''
+      parts.push(`• ${sym}[${e.title}] ${e.content}`)
+    })
+  }
+
+  if (mcpRules.length > 0) {
+    parts.push('\nMCP / EXTERNAL DATA RULES (how to interpret external search results):')
+    mcpRules.forEach(e => parts.push(`• [${e.title}] ${e.content}`))
+  }
+
+  return `\n\n[User Knowledge Base — auto-injected context]\n${parts.join('\n')}`
+}
+
+export async function runTradingAgent({ userId, message, portfolio, llmConfig = {}, mcpServers = [], userContext = [] }) {
   const portfolioText = portfolio.length === 0
     ? 'The portfolio is currently empty.'
     : portfolio
@@ -418,17 +453,18 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
     .map(r => r.value.toolName)
 
   // ── Step 5: assemble system prompt with all pre-fetched context ──
-  const liveSection = contextBlock ? `\n\n${contextBlock}` : ''
-  const mcpSection  = mcpContextParts.length > 0
+  const liveSection        = contextBlock ? `\n\n${contextBlock}` : ''
+  const mcpSection         = mcpContextParts.length > 0
     ? `\n\n📡 EXTERNAL SEARCH RESULTS (use this information to answer the user):\n\n${mcpContextParts.join('\n\n')}`
     : ''
+  const userContextSection = buildUserContextBlock(userContext)
 
   const systemPrompt = `You are a concise vibe-trading assistant for TradeBuddy.
 Help the user manage their simulated portfolio using the tools provided, and answer questions about how to use the app.
 
 Current portfolio:
 ${portfolioText}
-${liveSection}${mcpSection}
+${liveSection}${mcpSection}${userContextSection}
 Trade execution guidelines:
 - Use execute_buy when the user wants to purchase shares
 - Use execute_sell when the user wants to sell a specific number of shares

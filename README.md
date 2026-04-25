@@ -1,6 +1,6 @@
 # TradeBuddy — Vibe Trading App
 
-A full-stack vibe trading application for learning markets without real money. Users manage a simulated portfolio, track a watchlist, view live price charts, and interact with an AI trading agent powered by their own LLM API key.
+A full-stack vibe trading application for learning markets without real money. Users manage a simulated portfolio, track a watchlist, view live price charts, interact with an AI trading agent, and build expert prompt templates with live data injection — all powered by their own LLM API key.
 
 ---
 
@@ -8,10 +8,14 @@ A full-stack vibe trading application for learning markets without real money. U
 
 - **Portfolio** — buy, sell, and track stocks with simulated money
 - **Live market data** — charts and price snapshots via Polygon.io
-- **AI trading agent** — powered by the user's own Anthropic, OpenAI, or Google Gemini API key
-- **Google Sign-In + email/password** authentication
+- **AI trading agent** — conversational agent powered by the user's own Anthropic, OpenAI, or Google Gemini key; supports MCP tool servers
+- **Prompt Manager** — expert prompt builder with `@token` syntax for injecting live data; stateless, re-runnable, MCP-capable (see below)
+- **Agent Context** — per-user instructions, ticker notes, and MCP rules auto-injected into the trading agent on every conversation
+- **Classroom & Groups** — teachers can create classes, invite students, and monitor leaderboards
+- **Ideas board** — share and react to trading ideas within a class or group
+- **Google Sign-In + email/password** authentication with password reset
 - **Admin panel** — manage user roles and disable accounts
-- **Role-based access** — admin, user, and read-only tiers
+- **Role-based access** — admin, teacher, premium, student, user, and read-only tiers
 
 ---
 
@@ -23,9 +27,17 @@ Browser (React + Vite)
         ▼
 Express API server (Node 22)
   ├── Auth (JWT + Google OAuth)
-  ├── Portfolio & Watchlist
+  ├── Portfolio & Watchlist & Transactions
   ├── Market data proxy (Polygon.io)
-  └── AI Trading Agent (Anthropic / OpenAI / Gemini)
+  ├── AI Trading Agent (Anthropic / OpenAI / Gemini / Ollama)
+  │     └── MCP tool servers (user-configured, Streamable HTTP)
+  ├── Prompt Manager
+  │     ├── Token resolver  (@portfolio, @AAPL, @AAPL:financials, …)
+  │     ├── Built-in vars   ({{date}}, {{user}}, {{market_status}}, …)
+  │     └── Stateless LLM run + MCP capability grants
+  ├── Agent Context (auto-injected per-user instructions)
+  ├── Classes, Groups, Leaderboard, Ideas
+  └── Customer Profile & Audit Log
         │
         ▼
 PostgreSQL database
@@ -312,6 +324,86 @@ API keys are encrypted with AES-256-GCM before being stored. They are never shar
 
 ---
 
+## Prompt Manager
+
+The Prompt Manager (sidebar → **Wand icon**) lets expert users build stateless, re-runnable prompt templates that pull in live data at run time — no conversation history, no hidden system prompt.
+
+### Token Syntax
+
+Write a template in plain text using two token families:
+
+**`{{variable}}` — built-in variables, resolved server-side**
+
+| Token | Resolves to |
+|-------|-------------|
+| `{{date}}` | Today's date — `YYYY-MM-DD` |
+| `{{time}}` | Current time in ET — `HH:MM ET` |
+| `{{day}}` | Day of the week |
+| `{{user}}` | Logged-in user's display name |
+| `{{market_status}}` | `Open` or `Closed` |
+
+**`@token` — live data injections and MCP capability grants**
+
+| Token | Resolves to |
+|-------|-------------|
+| `@portfolio` | Current holdings and cash balance |
+| `@watchlist` | Watchlist symbols |
+| `@market` | Live price snapshot for all portfolio + watchlist symbols |
+| `@AAPL` | Live quote for a specific ticker |
+| `@AAPL:financials` | Annual financial statements (income, balance sheet, cash flow) |
+| `@AAPL:financials:quarterly` | Quarterly financial statements |
+| `@mcp:server_name:tool_name` | MCP capability grant — makes the tool available to the LLM |
+
+### Example Template
+
+```
+You are a portfolio analyst. Today is {{date}} ({{day}}).
+Market: {{market_status}}
+
+## Holdings
+@portfolio
+
+## Watchlist
+@watchlist
+
+## Live Prices
+@market
+
+## Financials
+@AAPL:financials @TSLA:financials
+
+## Tools available
+@mcp:brave:web_search
+
+## Tasks
+1. Identify my top 3 concentration risks
+2. Flag watchlist stocks that look attractive relative to my holdings
+3. Compare AAPL and TSLA on revenue growth and margins
+4. Search for any recent news that might affect my positions
+```
+
+### How It Works
+
+1. **Parse** — the server extracts all `{{}}` and `@` tokens from the template
+2. **Validate on save** — unknown tokens or unavailable MCP servers are flagged before saving
+3. **Resolve at run time** — data tokens (`@portfolio`, `@AAPL`, etc.) are fetched in parallel and substituted into the prompt text; built-ins (`{{date}}` etc.) are resolved immediately
+4. **MCP grants** — `@mcp:server:tool` tokens make that tool available to the LLM; the model decides when and how to call it based on the resolved context
+5. **Single stateless LLM call** — the fully resolved prompt is sent as a one-shot request with no conversation history; the model may call MCP tools and receive their results in follow-up turns (capped at 5)
+
+### Autocomplete
+
+In the prompt editor, type `@` or `{{` to get an inline autocomplete dropdown. MCP server and tool names are populated from your connected servers. Clicking any token in the reference panel on the right inserts it at the cursor.
+
+### Agent Context (separate from Prompt Manager)
+
+The **Agent Context** tab manages per-user context entries that are automatically injected into the **Trading Agent** (the chat panel) on every conversation — not into Prompt Manager templates. Three types:
+
+- **Instructions** — global rules the agent follows (e.g. "Always consider tax implications")
+- **Ticker Notes** — research notes tied to a specific stock
+- **MCP Rules** — instructions for when and how the agent should use its tools
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Required | Description |
@@ -344,10 +436,12 @@ When you pull a new version of TradeBuddy:
 ```bash
 git pull
 npm install           # install any new dependencies
-npm run db:setup      # apply any new tables (safe to re-run)
+npm run db:setup      # apply any new tables and column migrations (safe to re-run)
 npm run build         # rebuild the frontend
 sudo systemctl restart tradebuddy   # or docker restart tradebuddy
 ```
+
+`npm run db:setup` uses `IF NOT EXISTS` guards and `ADD COLUMN IF NOT EXISTS` migrations throughout, so it is always safe to re-run against an existing database. New tables added in recent versions include `agent_context`, `saved_prompts`, `mcp_servers`, `groups`, and `customer_profiles`.
 
 ---
 

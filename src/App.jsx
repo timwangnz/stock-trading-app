@@ -22,7 +22,7 @@ import Classroom     from './pages/Classroom'
 import Leaderboard   from './pages/Leaderboard'
 import Ideas         from './pages/Ideas'
 import Groups        from './pages/Groups'
-import KnowledgeBase     from './pages/KnowledgeBase'
+import PromptManager     from './pages/PromptManager'
 import CustomerProfile  from './pages/CustomerProfile'
 import AgentPortfolio   from './pages/AgentPortfolio'
 
@@ -37,7 +37,7 @@ const PAGES = {
   leaderboard:     Leaderboard,
   ideas:           Ideas,
   groups:          Groups,
-  knowledgebase:   KnowledgeBase,
+  promptmanager:   PromptManager,
   customerprofile: CustomerProfile,
   agentportfolio:  AgentPortfolio,
 }

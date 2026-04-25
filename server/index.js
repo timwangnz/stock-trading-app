@@ -42,6 +42,7 @@ import { OAuth2Client } from 'google-auth-library'
 import { requireRole, requirePermission, requireNonStudent, PERMISSIONS } from './rbac.js'
 import { runTradingAgent } from './agent.js'
 import { getToolsFromServer, testServer } from './mcp.js'
+import { runPromptTemplate, validateTokens, parseTokens } from './promptRunner.js'
 import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextRun } from './agentPortfolio.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
@@ -904,12 +905,22 @@ app.post('/api/agent/trade',
         mcpRows.map(async s => ({ ...s, _tools: await getToolsFromServer(s) }))
       )
 
+      // Load user's enabled agent context entries (instructions, ticker notes, MCP rules)
+      const { rows: userContext } = await pool.query(
+        `SELECT type, ticker, title, content
+         FROM agent_context
+         WHERE user_id=$1 AND enabled=true
+         ORDER BY priority DESC, created_at ASC`,
+        [req.user.id]
+      )
+
       const result = await runTradingAgent({
-        userId:    req.user.id,
-        message:   message.trim(),
-        portfolio: portfolio ?? [],
+        userId:      req.user.id,
+        message:     message.trim(),
+        portfolio:   portfolio ?? [],
         llmConfig,
         mcpServers,
+        userContext,
       })
       if (result.trade) {
         audit(req.user.id, `agent_${result.trade.action}`, { ...result.trade, command: message.trim() }, req)
@@ -917,6 +928,334 @@ app.post('/api/agent/trade',
       res.json(result)
     } catch (err) {
       console.error('Agent error:', err.message)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// ── Agent Context (knowledge base entries injected into system prompt) ──
+app.get('/api/agent-context', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, type, ticker, title, content, enabled, priority, created_at, updated_at
+     FROM agent_context WHERE user_id=$1 ORDER BY priority DESC, created_at ASC`,
+    [req.user.id]
+  )
+  res.json(rows)
+})
+
+app.post('/api/agent-context', authMiddleware, async (req, res) => {
+  const { type = 'instruction', ticker, title, content, priority = 0 } = req.body
+  if (!title?.trim())   return res.status(400).json({ error: 'title is required' })
+  if (!content?.trim()) return res.status(400).json({ error: 'content is required' })
+  if (!['instruction', 'ticker_note', 'mcp_rule'].includes(type))
+    return res.status(400).json({ error: 'invalid type' })
+
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO agent_context (user_id, type, ticker, title, content, priority)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING id, type, ticker, title, content, enabled, priority, created_at, updated_at`,
+    [req.user.id, type, ticker?.toUpperCase() || null, title.trim(), content.trim(), priority]
+  )
+  res.status(201).json(row)
+})
+
+app.patch('/api/agent-context/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params
+  // Only allow updating fields the user controls
+  const fields = ['title', 'content', 'ticker', 'enabled', 'priority']
+  const sets   = []
+  const vals   = []
+  let   idx    = 1
+  for (const f of fields) {
+    if (req.body[f] !== undefined) {
+      sets.push(`${f} = $${idx++}`)
+      vals.push(f === 'ticker' ? (req.body[f]?.toUpperCase() || null) : req.body[f])
+    }
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' })
+  sets.push(`updated_at = NOW()`)
+  vals.push(id, req.user.id)
+
+  const { rows: [row] } = await pool.query(
+    `UPDATE agent_context SET ${sets.join(', ')}
+     WHERE id=$${idx++} AND user_id=$${idx}
+     RETURNING id, type, ticker, title, content, enabled, priority, created_at, updated_at`,
+    vals
+  )
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  res.json(row)
+})
+
+app.delete('/api/agent-context/:id', authMiddleware, async (req, res) => {
+  const { rowCount } = await pool.query(
+    'DELETE FROM agent_context WHERE id=$1 AND user_id=$2',
+    [req.params.id, req.user.id]
+  )
+  if (!rowCount) return res.status(404).json({ error: 'Not found' })
+  res.status(204).end()
+})
+
+// ── Saved Prompts ────────────────────────────────────────────────
+// Prompts bundle a message + context_snap + datasets[].
+// Each dataset entry is resolved at run time — portfolio from DB, market
+// prices from Polygon, financials from Polygon, MCP tools via HTTP.
+// Exported JSON is MCP-prompt compatible so any MCP client can replay it.
+
+/** Small number formatter for server-side dataset blocks */
+function fmtBig(n) {
+  if (n == null) return '—'
+  const abs = Math.abs(n), sign = n < 0 ? '-' : ''
+  if (abs >= 1e12) return `${sign}$${(abs/1e12).toFixed(2)}T`
+  if (abs >= 1e9)  return `${sign}$${(abs/1e9).toFixed(2)}B`
+  if (abs >= 1e6)  return `${sign}$${(abs/1e6).toFixed(2)}M`
+  if (abs >= 1e3)  return `${sign}$${(abs/1e3).toFixed(1)}K`
+  return `${sign}$${abs.toFixed(2)}`
+}
+
+/**
+ * Resolve each dataset entry into a formatted text block.
+ * Returns an array of strings that get joined and prepended to the system prompt.
+ */
+async function fetchDatasets(userId, datasets = []) {
+  const polyKey = process.env.POLYGON_API_KEY
+  const parts   = []
+
+  for (const ds of datasets) {
+    try {
+      switch (ds.type) {
+
+        case 'portfolio': {
+          const { rows } = await pool.query(
+            `SELECT p.symbol, p.shares, p.avg_cost, b.cash
+             FROM portfolio p
+             LEFT JOIN user_balances b ON b.user_id = p.user_id
+             WHERE p.user_id = $1`,
+            [userId]
+          )
+          if (rows.length > 0) {
+            const lines = rows.map(r =>
+              `  • ${r.symbol}: ${Number(r.shares).toFixed(4)} shares @ avg $${Number(r.avg_cost).toFixed(2)}`
+            )
+            if (rows[0]?.cash != null) lines.push(`  • Cash: $${Number(rows[0].cash).toFixed(2)}`)
+            parts.push(`[Dataset: Portfolio Holdings]\n${lines.join('\n')}`)
+          }
+          break
+        }
+
+        case 'watchlist': {
+          const { rows } = await pool.query(
+            'SELECT symbol FROM watchlist WHERE user_id=$1 ORDER BY added_at',
+            [userId]
+          )
+          if (rows.length > 0) {
+            parts.push(`[Dataset: Watchlist]\n  ${rows.map(r => r.symbol).join(', ')}`)
+          }
+          break
+        }
+
+        case 'market_snapshot': {
+          const tickers = (ds.tickers ?? []).filter(Boolean)
+          if (!tickers.length || !polyKey) break
+          const syms = tickers.join(',')
+          const res  = await fetch(
+            `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms}&apiKey=${polyKey}`,
+            { signal: AbortSignal.timeout(8000) }
+          )
+          if (!res.ok) break
+          const data  = await res.json()
+          const lines = (data.tickers ?? []).map(t => {
+            const price = t.day?.c ?? t.prevDay?.c
+            const chg   = t.todaysChangePerc
+            return `  • ${t.ticker}: $${price?.toFixed(2) ?? '—'}` +
+              (chg != null ? ` (${chg > 0 ? '+' : ''}${chg.toFixed(2)}%)` : '')
+          })
+          if (lines.length) parts.push(`[Dataset: Live Market Snapshot]\n${lines.join('\n')}`)
+          break
+        }
+
+        case 'financials': {
+          const { ticker, statements = ['income'] } = ds
+          if (!ticker || !polyKey) break
+          const res = await fetch(
+            `https://api.polygon.io/vX/reference/financials?ticker=${ticker}&limit=1&timeframe=annual&apiKey=${polyKey}`,
+            { signal: AbortSignal.timeout(10000) }
+          )
+          if (!res.ok) break
+          const data   = await res.json()
+          const period = data.results?.[0]
+          if (!period) break
+          const fin  = period.financials ?? {}
+          const year = period.fiscal_year ?? period.end_date?.slice(0, 4) ?? ''
+          const lines = [`[Dataset: ${ticker} Financials ${year}]`]
+          if (statements.includes('income') && fin.income_statement) {
+            const i = fin.income_statement
+            lines.push(`  Income — Revenue: ${fmtBig(i.revenues?.value)}, Net Income: ${fmtBig(i.net_income_loss?.value)}, EPS: ${i.basic_earnings_per_share?.value?.toFixed(2) ?? '—'}`)
+          }
+          if (statements.includes('balance') && fin.balance_sheet) {
+            const b = fin.balance_sheet
+            lines.push(`  Balance — Assets: ${fmtBig(b.assets?.value)}, Liabilities: ${fmtBig(b.liabilities?.value)}, Equity: ${fmtBig(b.equity?.value)}`)
+          }
+          if (statements.includes('cashflow') && fin.cash_flow_statement) {
+            const c = fin.cash_flow_statement
+            lines.push(`  Cash Flow — Operating: ${fmtBig(c.net_cash_flow_from_operating_activities?.value)}, Investing: ${fmtBig(c.net_cash_flow_from_investing_activities?.value)}`)
+          }
+          parts.push(lines.join('\n'))
+          break
+        }
+
+        case 'mcp_tool': {
+          const { server_id, tool_name, query, server_name } = ds
+          if (!server_id || !tool_name) break
+          const { rows: [server] } = await pool.query(
+            'SELECT * FROM mcp_servers WHERE id=$1 AND user_id=$2',
+            [server_id, userId]
+          )
+          if (!server) break
+          const result = await callMCPTool(
+            { url: server.url, auth_header: server.auth_header },
+            tool_name,
+            { query: query || '' }
+          ).catch(e => `Error: ${e.message}`)
+          if (result) parts.push(`[Dataset: ${server_name || tool_name} Results]\n${result}`)
+          break
+        }
+      }
+    } catch (err) {
+      console.warn(`[datasets] Failed to resolve "${ds.type}":`, err.message)
+    }
+  }
+
+  return parts.join('\n\n')
+}
+
+app.get('/api/saved-prompts', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, title, description, message, context_snap, datasets, run_count, created_at, updated_at
+     FROM saved_prompts WHERE user_id=$1 ORDER BY created_at DESC`,
+    [req.user.id]
+  )
+  res.json(rows)
+})
+
+app.post('/api/saved-prompts', authMiddleware, async (req, res) => {
+  const { title, description, message, context_snap = [], datasets = [] } = req.body
+  if (!title?.trim())   return res.status(400).json({ error: 'title is required' })
+  if (!message?.trim()) return res.status(400).json({ error: 'message is required' })
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO saved_prompts (user_id, title, description, message, context_snap, datasets)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING id, title, description, message, context_snap, datasets, run_count, created_at, updated_at`,
+    [req.user.id, title.trim(), description?.trim() || null, message.trim(), JSON.stringify(context_snap), JSON.stringify(datasets)]
+  )
+  res.status(201).json(row)
+})
+
+app.patch('/api/saved-prompts/:id', authMiddleware, async (req, res) => {
+  const jsonFields = new Set(['context_snap', 'datasets'])
+  const allowed    = ['title', 'description', 'message', 'context_snap', 'datasets']
+  const sets = [], vals = []
+  let idx = 1
+  for (const f of allowed) {
+    if (req.body[f] !== undefined) {
+      sets.push(`${f} = $${idx++}`)
+      vals.push(jsonFields.has(f) ? JSON.stringify(req.body[f]) : req.body[f])
+    }
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' })
+  sets.push(`updated_at = NOW()`)
+  vals.push(req.params.id, req.user.id)
+  const { rows: [row] } = await pool.query(
+    `UPDATE saved_prompts SET ${sets.join(', ')}
+     WHERE id=$${idx++} AND user_id=$${idx}
+     RETURNING id, title, description, message, context_snap, datasets, run_count, created_at, updated_at`,
+    vals
+  )
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  res.json(row)
+})
+
+app.delete('/api/saved-prompts/:id', authMiddleware, async (req, res) => {
+  const { rowCount } = await pool.query(
+    'DELETE FROM saved_prompts WHERE id=$1 AND user_id=$2',
+    [req.params.id, req.user.id]
+  )
+  if (!rowCount) return res.status(404).json({ error: 'Not found' })
+  res.status(204).end()
+})
+
+// Run a saved prompt via the stateless token-based runner
+app.post('/api/saved-prompts/:id/run',
+  requirePermission(PERMISSIONS.TRADE),
+  async (req, res) => {
+    try {
+      const { rows: [prompt] } = await pool.query(
+        'SELECT * FROM saved_prompts WHERE id=$1 AND user_id=$2',
+        [req.params.id, req.user.id]
+      )
+      if (!prompt) return res.status(404).json({ error: 'Prompt not found' })
+
+      const { rows: [settings] } = await pool.query(
+        'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id=$1',
+        [req.user.id]
+      )
+      const llmConfig = getLLMConfigForUser(settings ?? {})
+
+      const result = await runPromptTemplate({
+        template:  prompt.message,
+        userId:    req.user.id,
+        userName:  req.user.name,
+        llmConfig,
+      })
+
+      pool.query('UPDATE saved_prompts SET run_count = run_count + 1 WHERE id=$1', [prompt.id])
+      res.json({ ...result, prompt_title: prompt.title })
+    } catch (err) {
+      console.error('[saved-prompts/run]', err.message)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// Ad-hoc stateless prompt run (no saved prompt required)
+app.post('/api/prompts/run',
+  requirePermission(PERMISSIONS.TRADE),
+  async (req, res) => {
+    const { template } = req.body
+    if (!template?.trim()) return res.status(400).json({ error: 'template is required' })
+
+    try {
+      const { rows: [settings] } = await pool.query(
+        'SELECT provider, model, api_key_enc FROM user_llm_settings WHERE user_id=$1',
+        [req.user.id]
+      )
+      const llmConfig = getLLMConfigForUser(settings ?? {})
+
+      const result = await runPromptTemplate({
+        template: template.trim(),
+        userId:   req.user.id,
+        userName: req.user.name,
+        llmConfig,
+      })
+
+      res.json(result)
+    } catch (err) {
+      console.error('[prompts/run]', err.message)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// Validate tokens in a template (used on save)
+app.post('/api/prompts/validate',
+  authMiddleware,
+  async (req, res) => {
+    const { template } = req.body
+    if (!template) return res.json({ errors: [] })
+    try {
+      const tokens = parseTokens(template)
+      const errors = await validateTokens(tokens, req.user.id)
+      res.json({ errors, tokenCount: tokens.length })
+    } catch (err) {
       res.status(500).json({ error: err.message })
     }
   }

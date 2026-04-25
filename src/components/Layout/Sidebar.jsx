@@ -5,7 +5,7 @@
  * Teachers see a mode toggle: Teaching ↔ Trading.
  */
 
-import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight, BookOpen, Bot } from 'lucide-react'
+import { LayoutDashboard, Briefcase, TrendingUp, Shield, BarChart2, Activity, Trophy, Lightbulb, GraduationCap, Users, ArrowLeftRight, Wand2, Bot } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import PortfolioSparkline from '../PortfolioSparkline'
@@ -19,7 +19,7 @@ const TRADER_NAV = [
   { label: 'History',          page: 'history',         icon: BarChart2 },
   { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
   { label: 'Activity',         page: 'activity',        icon: Activity },
-  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
+  { label: 'Prompt Manager',   page: 'promptmanager',   icon: Wand2 },
 ]
 
 // Nav for students in a class — includes classroom-specific items
@@ -32,7 +32,7 @@ const STUDENT_NAV = [
   { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
   { label: 'Activity',         page: 'activity',        icon: Activity },
   { label: 'My Groups',        page: 'groups',          icon: Users },
-  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
+  { label: 'Prompt Manager',   page: 'promptmanager',   icon: Wand2 },
 ]
 
 // Nav items shown in Teacher mode (teacher/admin only)
@@ -41,7 +41,7 @@ const TEACHER_NAV = [
   { label: 'Leaderboard',      page: 'leaderboard',     icon: Trophy },
   { label: 'Ideas',            page: 'ideas',           icon: Lightbulb },
   { label: 'Activity',         page: 'activity',        icon: Activity },
-  { label: 'Knowledge Base',   page: 'knowledgebase',   icon: BookOpen },
+  { label: 'Prompt Manager',   page: 'promptmanager',   icon: Wand2 },
 ]
 
 export default function Sidebar({ open, onClose }) {

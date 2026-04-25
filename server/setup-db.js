@@ -481,6 +481,50 @@ async function setup() {
   await client.query(`CREATE INDEX IF NOT EXISTS idx_mcp_servers_user ON mcp_servers (user_id)`)
   console.log('✅ Table "mcp_servers" ready')
 
+  // User-defined context entries that are auto-injected into the trading agent's system prompt.
+  // type: 'instruction' (global rule), 'ticker_note' (per-symbol note), 'mcp_rule' (MCP guidance)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS agent_context (
+      id          BIGSERIAL     PRIMARY KEY,
+      user_id     VARCHAR(50)   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type        VARCHAR(20)   NOT NULL DEFAULT 'instruction'
+                  CHECK (type IN ('instruction', 'ticker_note', 'mcp_rule')),
+      ticker      VARCHAR(10)   NULL,
+      title       VARCHAR(255)  NOT NULL,
+      content     TEXT          NOT NULL,
+      enabled     BOOLEAN       NOT NULL DEFAULT true,
+      priority    INTEGER       NOT NULL DEFAULT 0,
+      created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_agent_context_user ON agent_context (user_id)`)
+  console.log('✅ Table "agent_context" ready')
+
+  // Saved, shareable prompts — message + context snapshot exported as runnable JSON / MCP prompt format.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS saved_prompts (
+      id           BIGSERIAL    PRIMARY KEY,
+      user_id      VARCHAR(50)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title        VARCHAR(255) NOT NULL,
+      description  TEXT         NULL,
+      message      TEXT         NOT NULL,
+      context_snap JSONB        NOT NULL DEFAULT '[]',
+      datasets     JSONB        NOT NULL DEFAULT '[]',
+      run_count    INTEGER      NOT NULL DEFAULT 0,
+      created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_saved_prompts_user ON saved_prompts (user_id)`)
+  // Migration: add columns introduced after initial table creation
+  await client.query(`
+    ALTER TABLE saved_prompts
+      ADD COLUMN IF NOT EXISTS datasets  JSONB   NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0
+  `)
+  console.log('✅ Table "saved_prompts" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')
