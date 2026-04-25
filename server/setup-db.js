@@ -521,7 +521,8 @@ async function setup() {
   await client.query(`
     ALTER TABLE saved_prompts
       ADD COLUMN IF NOT EXISTS datasets  JSONB   NOT NULL DEFAULT '[]',
-      ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0
+      ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS schedule  JSONB   NULL
   `)
   console.log('✅ Table "saved_prompts" ready')
 

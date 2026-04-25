@@ -16,7 +16,7 @@ import {
   Wand2, Plus, Trash2, Edit2, X, ToggleLeft, ToggleRight,
   Loader2, AlertCircle, CheckCircle2, Play, Copy,
   Lightbulb, Tag, Plug, ChevronRight, ChevronDown,
-  Info, Zap, RefreshCw, BookOpen, Terminal,
+  Info, BookOpen, Terminal, Clock, Mail,
 } from 'lucide-react'
 import FinancialsPanel from '../components/FinancialsPanel'
 import {
@@ -34,6 +34,7 @@ const BUILTIN_TOKENS = [
   { token: '{{time}}',          desc: 'Current time in ET' },
   { token: '{{day}}',           desc: 'Day of the week' },
   { token: '{{user}}',          desc: 'Your display name' },
+  { token: '{{user_email}}',    desc: 'Your email address' },
   { token: '{{market_status}}', desc: '"Open" or "Closed"' },
 ]
 
@@ -44,6 +45,10 @@ const DATA_TOKENS = [
   { token: '@TICKER',                      desc: 'Live quote for a specific ticker (e.g. @AAPL)' },
   { token: '@TICKER:financials',           desc: 'Annual financial statements for a ticker' },
   { token: '@TICKER:financials:quarterly', desc: 'Quarterly financial statements' },
+]
+
+const ACTION_TOKENS = [
+  { token: '@email', desc: 'Send results to your email via Resend' },
 ]
 
 // ── Token regex (mirrors server/promptRunner.js) ──────────────────
@@ -163,6 +168,7 @@ function getAutocompleteItems(text, caretPos, mcpServers) {
     type:  'general',
     items: [
       ...DATA_TOKENS.filter(t => t.token.startsWith(`@${partial}`)),
+      ...ACTION_TOKENS.filter(t => t.token.startsWith(`@${partial}`)),
       { token: '@mcp:', desc: 'MCP tool — pick server + tool' },
     ],
     prefix: atMatch[0],
@@ -376,6 +382,24 @@ function InfoPanel({ open, onToggle, editorRef, mcpServers }) {
             </div>
           </section>
 
+          {/* Action tokens */}
+          <section>
+            <p className="text-[10px] text-muted uppercase tracking-wider font-semibold mb-2">Actions</p>
+            <div className="space-y-1">
+              {ACTION_TOKENS.map(t => (
+                <button
+                  key={t.token}
+                  onClick={() => insert(t.token)}
+                  title={`Insert ${t.token}`}
+                  className="w-full text-left group rounded-md px-2 py-1.5 hover:bg-surface-hover transition-colors"
+                >
+                  <code className="text-[11px] text-green-400 group-hover:text-green-300">{t.token}</code>
+                  <p className="text-[10px] text-muted mt-0.5 leading-tight">{t.desc}</p>
+                </button>
+              ))}
+            </div>
+          </section>
+
           {/* MCP tools */}
           {mcpServers.length > 0 && (
             <section>
@@ -497,6 +521,12 @@ function PromptCard({ prompt, onEdit, onDelete, onRun, running }) {
       <div className="mt-3 flex items-center gap-3 text-[11px] text-muted">
         <span>{tokens.length} token{tokens.length !== 1 ? 's' : ''}</span>
         {prompt.run_count > 0 && <span>· {prompt.run_count} run{prompt.run_count !== 1 ? 's' : ''}</span>}
+        {prompt.schedule?.enabled && (
+          <span className="flex items-center gap-1 text-accent-blue">
+            <Clock size={10} />
+            {prompt.schedule.time} · {(prompt.schedule.days ?? []).join(' ')}
+          </span>
+        )}
         <span className="ml-auto">{new Date(prompt.created_at).toLocaleDateString()}</span>
       </div>
     </div>
@@ -505,24 +535,48 @@ function PromptCard({ prompt, onEdit, onDelete, onRun, running }) {
 
 // ── PromptModal ───────────────────────────────────────────────────
 
+const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const TIMEZONES = [
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore', 'Australia/Sydney',
+]
+
+function defaultSchedule() {
+  return { enabled: false, time: '08:30', timezone: 'America/New_York', days: ['Mon','Tue','Wed','Thu','Fri'] }
+}
+
 function PromptModal({ prompt, onClose, onSave }) {
   const [title,       setTitle]       = useState(prompt?.title       ?? '')
   const [description, setDescription] = useState(prompt?.description ?? '')
   const [message,     setMessage]     = useState(prompt?.message     ?? SAMPLE_PROMPT)
+  const [schedule,    setSchedule]    = useState(() => prompt?.schedule ?? defaultSchedule())
   const [saving,      setSaving]      = useState(false)
   const [validating,  setValidating]  = useState(false)
   const [errors,      setErrors]      = useState([])
   const [mcpServers,  setMcpServers]  = useState([])
   const [infoPanelOpen, setInfoPanelOpen] = useState(true)
+  const [showSchedule,  setShowSchedule]  = useState(!!(prompt?.schedule?.enabled))
   const editorRef = useRef(null)
 
   useEffect(() => {
     fetchMCPServersWithTools().then(setMcpServers).catch(() => {})
   }, [])
 
+  const hasEmailToken = message.includes('@email')
+
+  function toggleDay(day) {
+    setSchedule(s => ({
+      ...s,
+      days: s.days.includes(day) ? s.days.filter(d => d !== day) : [...s.days, day],
+    }))
+  }
+
   async function handleSave() {
     if (!title.trim())   return setErrors(['Title is required'])
     if (!message.trim()) return setErrors(['Prompt template is required'])
+    if (schedule.enabled && !hasEmailToken) {
+      return setErrors(['Scheduled prompts need @email to deliver results — add @email to your template'])
+    }
 
     setValidating(true)
     try {
@@ -533,7 +587,7 @@ function PromptModal({ prompt, onClose, onSave }) {
 
     setSaving(true)
     try {
-      await onSave({ title: title.trim(), description: description.trim(), message: message.trim() })
+      await onSave({ title: title.trim(), description: description.trim(), message: message.trim(), schedule })
       onClose()
     } catch (err) {
       setErrors([err.message])
@@ -632,6 +686,96 @@ function PromptModal({ prompt, onClose, onSave }) {
             editorRef={editorRef}
             mcpServers={mcpServers}
           />
+        </div>
+
+        {/* Schedule section */}
+        <div className="px-5 py-3 border-t border-border shrink-0 bg-surface">
+          <button
+            onClick={() => setShowSchedule(v => !v)}
+            className="flex items-center gap-2 text-xs text-muted hover:text-primary transition-colors"
+          >
+            <Clock size={13} className={schedule.enabled ? 'text-accent-blue' : ''} />
+            <span className={schedule.enabled ? 'text-accent-blue font-medium' : ''}>
+              {schedule.enabled
+                ? `Scheduled — ${schedule.time} · ${schedule.days.join(' ')} · ${schedule.timezone}`
+                : 'Set schedule (optional)'}
+            </span>
+            {showSchedule ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+
+          {showSchedule && (
+            <div className="mt-3 space-y-3">
+              {/* Enable toggle */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSchedule(s => ({ ...s, enabled: !s.enabled }))}
+                  className="flex items-center gap-2 text-xs"
+                >
+                  {schedule.enabled
+                    ? <ToggleRight size={18} className="text-accent-blue" />
+                    : <ToggleLeft size={18} className="text-muted" />}
+                  <span className={schedule.enabled ? 'text-accent-blue font-medium' : 'text-muted'}>
+                    {schedule.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </button>
+                {schedule.enabled && !hasEmailToken && (
+                  <span className="flex items-center gap-1 text-[11px] text-amber-400">
+                    <AlertCircle size={11} /> Add <code className="font-mono">@email</code> to receive results
+                  </span>
+                )}
+                {schedule.enabled && hasEmailToken && (
+                  <span className="flex items-center gap-1 text-[11px] text-gain">
+                    <Mail size={11} /> Results will be emailed to you
+                  </span>
+                )}
+              </div>
+
+              {schedule.enabled && (
+                <div className="flex items-center gap-4 flex-wrap">
+                  {/* Time */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted">Time</label>
+                    <input
+                      type="time"
+                      value={schedule.time}
+                      onChange={e => setSchedule(s => ({ ...s, time: e.target.value }))}
+                      className="rounded-lg border border-border bg-surface-card px-2 py-1.5 text-xs text-primary focus:outline-none focus:ring-1 focus:ring-accent-blue/50"
+                    />
+                  </div>
+
+                  {/* Timezone */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted">Timezone</label>
+                    <select
+                      value={schedule.timezone}
+                      onChange={e => setSchedule(s => ({ ...s, timezone: e.target.value }))}
+                      className="rounded-lg border border-border bg-surface-card px-2 py-1.5 text-xs text-primary focus:outline-none focus:ring-1 focus:ring-accent-blue/50"
+                    >
+                      {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Days */}
+                  <div className="flex items-center gap-1">
+                    {DAYS_OF_WEEK.map(day => (
+                      <button
+                        key={day}
+                        onClick={() => toggleDay(day)}
+                        className={clsx(
+                          'px-2 py-1 rounded-lg text-xs font-medium transition-colors',
+                          schedule.days.includes(day)
+                            ? 'bg-accent-blue/20 text-accent-blue'
+                            : 'text-muted hover:bg-surface-hover'
+                        )}
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

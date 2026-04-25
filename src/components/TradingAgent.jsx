@@ -7,7 +7,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Bot, Send, TrendingUp, TrendingDown, Trash2, Sparkles,
-         ChevronDown, ChevronUp, Newspaper, ExternalLink, Zap } from 'lucide-react'
+         ChevronDown, ChevronUp, Newspaper, ExternalLink, Zap,
+         CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 
 // ── Types ────────────────────────────────────────────────────────
@@ -207,6 +208,61 @@ function MCPBadge({ toolName }) {
   )
 }
 
+// ── Pending trade confirmation card ──────────────────────────────
+function PendingTradeCard({ pendingTrade, onConfirm, onCancel, confirming }) {
+  const { toolName, symbol, shares, livePrice, reasoning } = pendingTrade
+
+  const isBuy    = toolName === 'execute_buy'
+  const isSell   = toolName === 'execute_sell'
+  const isRemove = toolName === 'remove_holding'
+
+  const actionLabel = isBuy ? 'Buy' : isSell ? 'Sell' : 'Remove'
+  const total       = isBuy && livePrice && shares ? shares * livePrice : null
+
+  return (
+    <div className="mt-1 border border-amber-500/30 bg-amber-500/8 rounded-xl p-3 space-y-2.5">
+      <div className="flex items-center gap-1.5 text-amber-400 text-xs font-medium">
+        <AlertTriangle size={12} />
+        Confirm trade
+      </div>
+
+      <div className="space-y-0.5">
+        <p className="text-primary text-sm font-semibold">
+          {actionLabel} {!isRemove && shares !== undefined ? `${shares} ×` : ''} {symbol}
+          {(isBuy || isSell) && livePrice ? ` @ $${Number(livePrice).toFixed(2)} (live)` : ''}
+        </p>
+        {total && (
+          <p className="text-muted text-xs">
+            Total: ${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+        )}
+        {reasoning && (
+          <p className="text-secondary text-xs leading-snug pt-0.5">{reasoning}</p>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={onConfirm}
+          disabled={confirming}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gain/15 border border-gain/30 text-gain text-xs font-medium hover:bg-gain/25 transition-colors disabled:opacity-50"
+        >
+          <CheckCircle2 size={12} />
+          {confirming ? 'Executing…' : 'Confirm'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={confirming}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-hover border border-border text-muted text-xs font-medium hover:text-primary transition-colors disabled:opacity-50"
+        >
+          <XCircle size={12} />
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Typing indicator ─────────────────────────────────────────────
 function TypingDots() {
   return (
@@ -242,7 +298,8 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
       trade: null,
     },
   ])
-  const [loading, setLoading] = useState(false)
+  const [loading,    setLoading]    = useState(false)
+  const [confirming, setConfirming] = useState(null)  // message id being confirmed
   const bottomRef = useRef(null)
   const inputRef  = useRef(null)
 
@@ -302,6 +359,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
         role:           'agent',
         text:           data.response,
         trade:          data.trade,
+        pendingTrade:   data.pendingTrade ?? null,
         fetchedTickers: data.tickersFetched ?? [],
         newsArticles:   data.newsArticles   ?? [],
         mcpToolUsed:    data.mcpToolUsed    ?? null,
@@ -320,6 +378,44 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
     } finally {
       setLoading(false)
     }
+  }
+
+  const confirmTrade = async (msgId, pendingTrade) => {
+    setConfirming(msgId)
+    try {
+      const token = localStorage.getItem('tradebuddy_token')
+      const res   = await fetch('/api/agent/confirm-trade', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ toolName: pendingTrade.toolName, toolInput: pendingTrade }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Trade failed')
+
+      // Replace the pending message with the executed result
+      setMessages(prev => prev.map(m =>
+        m.id === msgId
+          ? { ...m, text: data.response, pendingTrade: null, trade: data.trade }
+          : m
+      ))
+      if (data.trade) onTradeExecuted?.()
+    } catch (err) {
+      setMessages(prev => prev.map(m =>
+        m.id === msgId
+          ? { ...m, text: err.message, pendingTrade: null, error: true }
+          : m
+      ))
+    } finally {
+      setConfirming(null)
+    }
+  }
+
+  const cancelTrade = (msgId) => {
+    setMessages(prev => prev.map(m =>
+      m.id === msgId
+        ? { ...m, text: 'Trade cancelled.', pendingTrade: null }
+        : m
+    ))
   }
 
   const handleKeyDown = (e) => {
@@ -356,6 +452,14 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                     ? <MarkdownMessage text={m.text} />
                     : m.text}
                 </div>
+                {m.pendingTrade && (
+                  <PendingTradeCard
+                    pendingTrade={m.pendingTrade}
+                    onConfirm={() => confirmTrade(m.id, m.pendingTrade)}
+                    onCancel={() => cancelTrade(m.id)}
+                    confirming={confirming === m.id}
+                  />
+                )}
                 {m.trade && <TradeBadge trade={m.trade} />}
                 {m.mcpToolUsed && <MCPBadge toolName={m.mcpToolUsed} />}
                 {m.fetchedTickers?.length > 0 && (
@@ -464,6 +568,14 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
                       ? <MarkdownMessage text={m.text} />
                       : m.text}
                   </div>
+                  {m.pendingTrade && (
+                    <PendingTradeCard
+                      pendingTrade={m.pendingTrade}
+                      onConfirm={() => confirmTrade(m.id, m.pendingTrade)}
+                      onCancel={() => cancelTrade(m.id)}
+                      confirming={confirming === m.id}
+                    />
+                  )}
                   {m.trade && <TradeBadge trade={m.trade} />}
                 </div>
               </div>

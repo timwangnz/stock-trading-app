@@ -193,19 +193,30 @@ async function fetchLiveMarketContext(tickers) {
 
 // ── Tool definitions (Anthropic format — llm.js converts for other providers) ──
 
+// Confidence threshold: below this we surface a confirmation card instead of executing.
+export const TRADE_CONFIDENCE_THRESHOLD = 0.95
+
+const CONFIDENCE_FIELD = {
+  type: 'number',
+  description:
+    'Your confidence (0.0–1.0) that this trade matches the user\'s exact intent. ' +
+    'Use 0.99 for explicit, unambiguous commands with a clear quantity and ticker. ' +
+    'Use 0.5–0.8 when the ticker, quantity, or intent is ambiguous.',
+}
+
 const TOOLS = [
   {
     name: 'execute_buy',
-    description: 'Buy (or add to) a stock position in the portfolio.',
+    description: 'Buy (or add to) a stock position in the portfolio. Do NOT fill in a price — the server always uses the live market price.',
     input_schema: {
       type: 'object',
       properties: {
-        symbol:    { type: 'string', description: 'Ticker symbol in uppercase, e.g. AAPL' },
-        shares:    { type: 'number', description: 'Number of shares to buy (can be fractional)' },
-        price:     { type: 'number', description: 'Price per share in USD' },
-        reasoning: { type: 'string', description: 'One-sentence explanation shown to the user' },
+        symbol:     { type: 'string', description: 'Ticker symbol in uppercase, e.g. AAPL' },
+        shares:     { type: 'number', description: 'Number of shares to buy (can be fractional)' },
+        reasoning:  { type: 'string', description: 'One-sentence explanation shown to the user' },
+        confidence: CONFIDENCE_FIELD,
       },
-      required: ['symbol', 'shares', 'price', 'reasoning'],
+      required: ['symbol', 'shares', 'reasoning', 'confidence'],
     },
   },
   {
@@ -214,11 +225,12 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        symbol:    { type: 'string', description: 'Ticker symbol in uppercase' },
-        shares:    { type: 'number', description: 'Number of shares to sell' },
-        reasoning: { type: 'string', description: 'One-sentence explanation shown to the user' },
+        symbol:     { type: 'string', description: 'Ticker symbol in uppercase' },
+        shares:     { type: 'number', description: 'Number of shares to sell' },
+        reasoning:  { type: 'string', description: 'One-sentence explanation shown to the user' },
+        confidence: CONFIDENCE_FIELD,
       },
-      required: ['symbol', 'shares', 'reasoning'],
+      required: ['symbol', 'shares', 'reasoning', 'confidence'],
     },
   },
   {
@@ -227,10 +239,11 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        symbol:    { type: 'string', description: 'Ticker symbol in uppercase' },
-        reasoning: { type: 'string', description: 'One-sentence explanation shown to the user' },
+        symbol:     { type: 'string', description: 'Ticker symbol in uppercase' },
+        reasoning:  { type: 'string', description: 'One-sentence explanation shown to the user' },
+        confidence: CONFIDENCE_FIELD,
       },
-      required: ['symbol', 'reasoning'],
+      required: ['symbol', 'reasoning', 'confidence'],
     },
   },
 ]
@@ -275,7 +288,7 @@ async function adjustCash(userId, delta) {
 
 // ── Trade execution helpers ──────────────────────────────────────
 
-async function buyStock(userId, symbol, shares, price) {
+export async function buyStock(userId, symbol, shares, price) {
   const sym  = symbol.toUpperCase()
   const cost = shares * price
   const cash = await getCash(userId)
@@ -305,7 +318,7 @@ async function buyStock(userId, symbol, shares, price) {
   return { symbol: sym, shares: newShares, avgCost: newAvgCost }
 }
 
-async function sellStock(userId, symbol, shares, price = 0) {
+export async function sellStock(userId, symbol, shares, price = 0) {
   const sym = symbol.toUpperCase()
   const { rows: [existing] } = await pool.query(
     'SELECT shares, avg_cost FROM portfolio WHERE user_id = $1 AND symbol = $2',
@@ -328,7 +341,7 @@ async function sellStock(userId, symbol, shares, price = 0) {
   return { symbol: sym, shares: remaining, avgCost: existing.avg_cost }
 }
 
-async function removeStock(userId, symbol, price = 0) {
+export async function removeStock(userId, symbol, price = 0) {
   const sym = symbol.toUpperCase()
   const { rows: [existing] } = await pool.query(
     'SELECT shares FROM portfolio WHERE user_id = $1 AND symbol = $2', [userId, sym]
@@ -404,7 +417,10 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
   // ── Step 2: detect intent ─────────────────────────────────────────
   // Trade commands need prices only. Research/news queries benefit from
   // MCP search tools. No point calling Tavily for "buy 10 GOOGL".
-  const isTradeCommand   = /\b(buy|sell|remove|close|exit)\b/i.test(message)
+  //
+  // isTradeCommand requires explicit quantity/action syntax so that
+  // advisory questions like "should I buy AAPL?" don't trigger trades.
+  const isTradeCommand   = /\b(buy\s+[\d.]+|sell\s+([\d.]+|half|all)|remove|close\s+(my\s+)?[A-Z]{1,5}|exit)\b/i.test(message)
   const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think)\b/i.test(message)
   const needsMCPSearch   = !isTradeCommand && isResearchQuery
 
@@ -486,7 +502,15 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
     apiKey:   llmConfig.apiKey   || null,
   }
 
-  const turn1 = await callLLM(llmCfg, { systemPrompt, userMessage: message, tools: TOOLS })
+  // Only expose trade tools for explicit trade commands.
+  // For questions/analysis, passing no tools forces a text-only response,
+  // which prevents over-eager models (e.g. Gemini) from executing trades
+  // when the user just asked a question.
+  const turn1 = await callLLM(llmCfg, {
+    systemPrompt,
+    userMessage: message,
+    tools: isTradeCommand ? TOOLS : undefined,
+  })
 
   const { text, toolName, toolInput } = turn1
 
@@ -500,40 +524,163 @@ ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
     }
   }
 
+  const confidence = toolInput?.confidence ?? 1
+
+  // ── Stage 2: server-side executability check ─────────────────────
+  // Runs regardless of confidence — catches problems the LLM can't know about.
+  const { livePrice, blocker } = await validateTrade(toolName, toolInput, userId)
+
+  if (blocker) {
+    // Trade is not executable — return a clear error, no confirmation card
+    return { response: blocker, trade: null, pendingTrade: null, tickersFetched, newsArticles }
+  }
+
+  // ── Stage 1: intent clarity check ───────────────────────────────
+  // Trade is executable but LLM wasn't confident — ask the user to confirm.
+  if (confidence < TRADE_CONFIDENCE_THRESHOLD) {
+    return {
+      response:     null,
+      pendingTrade: { toolName, ...toolInput, livePrice },
+      trade:        null,
+      tickersFetched,
+      newsArticles,
+    }
+  }
+
+  // Both stages pass — execute immediately with the pre-resolved live price.
+  return executeTrade({ toolName, toolInput, userId, livePrice, contextBlock, tickersFetched, newsArticles })
+}
+
+// ── Live price resolver ───────────────────────────────────────────
+/**
+ * Resolve the current market price for a symbol.
+ * First checks the pre-fetched contextBlock snapshot, then falls back to a
+ * direct Polygon API call. Returns 0 if unavailable.
+ */
+export async function fetchLivePrice(symbol, contextBlock = null, tickersFetched = []) {
+  const sym = symbol.toUpperCase()
+
+  // 1. Try the already-fetched context block (fastest — no extra API call)
+  if (tickersFetched.includes(sym) && contextBlock) {
+    const m = contextBlock.match(new RegExp(`\\[${sym}\\][\\s\\S]*?Price:\\s+\\$([\\d.]+)`))
+    if (m) return parseFloat(m[1])
+  }
+
+  // 2. Fall back to a fresh Polygon snapshot
+  try {
+    const key = process.env.POLYGON_API_KEY
+    if (!key) return 0
+    const r = await fetch(
+      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${sym}&apiKey=${key}`,
+      { signal: AbortSignal.timeout(6000) }
+    )
+    if (!r.ok) return 0
+    const d = await r.json()
+    const t = d.tickers?.[0]
+    return t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Server-side executability check — runs independently of the LLM's confidence score.
+ * Returns { livePrice, blocker } where blocker is a human-readable error string or null.
+ *
+ * Checks:
+ *  1. Live price available (all buy/sell actions)
+ *  2. Sufficient cash balance (buy)
+ *  3. Sufficient share holdings (sell)
+ *  4. Holding exists (remove)
+ */
+export async function validateTrade(toolName, toolInput, userId) {
+  const symbol = toolInput.symbol?.toUpperCase()
+  const shares = Number(toolInput.shares) || 0
+  let livePrice = 0
+
+  // ── 1. Live price ───────────────────────────────────────────────
+  if (toolName === 'execute_buy' || toolName === 'execute_sell') {
+    livePrice = await fetchLivePrice(symbol)
+    if (!livePrice) {
+      return {
+        livePrice: 0,
+        blocker: `No live price available for ${symbol} right now. The market may be closed or the ticker unrecognised. Try again later or specify a different symbol.`,
+      }
+    }
+  }
+
+  // ── 2. Sufficient funds (buy) ───────────────────────────────────
+  if (toolName === 'execute_buy') {
+    const cost = shares * livePrice
+    const cash = await getCash(userId)
+    if (cash < cost) {
+      return {
+        livePrice,
+        blocker: `Insufficient funds — this trade costs $${cost.toFixed(2)} but you only have $${cash.toFixed(2)} cash.`,
+      }
+    }
+  }
+
+  // ── 3. Sufficient shares (sell) ─────────────────────────────────
+  if (toolName === 'execute_sell') {
+    const { rows: [holding] } = await pool.query(
+      'SELECT shares FROM portfolio WHERE user_id=$1 AND symbol=$2',
+      [userId, symbol]
+    )
+    if (!holding) {
+      return { livePrice, blocker: `You don't hold any ${symbol} to sell.` }
+    }
+    if (shares > parseFloat(holding.shares)) {
+      return {
+        livePrice,
+        blocker: `You only hold ${parseFloat(holding.shares).toFixed(4)} shares of ${symbol} — can't sell ${shares}.`,
+      }
+    }
+  }
+
+  // ── 4. Holding exists (remove) ──────────────────────────────────
+  if (toolName === 'remove_holding') {
+    const { rows: [holding] } = await pool.query(
+      'SELECT id FROM portfolio WHERE user_id=$1 AND symbol=$2',
+      [userId, symbol]
+    )
+    if (!holding) {
+      return { livePrice: 0, blocker: `You don't hold any ${symbol} to remove.` }
+    }
+  }
+
+  return { livePrice, blocker: null }
+}
+
+/**
+ * Execute a confirmed trade (used by both the agent and the confirm-trade endpoint).
+ * Always uses live market price — the LLM's stated price is only used as a fallback
+ * when no live data is available.
+ */
+export async function executeTrade({ toolName, toolInput, userId, livePrice = 0, contextBlock = null, tickersFetched = [], newsArticles = [] }) {
   try {
     if (toolName === 'execute_buy') {
-      const { symbol, shares, price, reasoning } = toolInput
-      const result = await buyStock(userId, symbol, shares, price)
-      recordTransaction(userId, result.symbol, 'buy', shares, price, 'agent')
+      const { symbol, shares, reasoning } = toolInput
+      const sym = symbol.toUpperCase()
+
+      // Use pre-resolved price, then try live fetch, no fallback to LLM guess
+      const execPrice = livePrice || await fetchLivePrice(sym, contextBlock, tickersFetched)
+      if (!execPrice) throw new Error(`No live price available for ${sym} — trade cannot be executed.`)
+
+      const result = await buyStock(userId, sym, shares, execPrice)
+      recordTransaction(userId, result.symbol, 'buy', shares, execPrice, 'agent')
       return {
-        response: `Bought ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} at $${price.toFixed(2)}. ${reasoning}`,
-        trade:    { action: 'buy', ...result, price },
+        response: `Bought ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} at $${execPrice.toFixed(2)}. ${reasoning}`,
+        trade:    { action: 'buy', ...result, price: execPrice },
         tickersFetched, newsArticles,
       }
     }
     if (toolName === 'execute_sell') {
       const { symbol, shares, reasoning } = toolInput
       const sym = symbol.toUpperCase()
-      let livePrice = 0
-      if (tickersFetched.includes(sym)) {
-        const m = contextBlock?.match(new RegExp(`\\[${sym}\\][\\s\\S]*?Price:\\s+\\$([\\d.]+)`))
-        livePrice = m ? parseFloat(m[1]) : 0
-      }
-      if (!livePrice) {
-        try {
-          const key = process.env.POLYGON_API_KEY
-          if (key) {
-            const r = await fetch(
-              `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${sym}&apiKey=${key}`
-            )
-            const d = await r.json()
-            const t = d.tickers?.[0]
-            livePrice = t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || 0
-          }
-        } catch { /* non-fatal */ }
-      }
-      const result = await sellStock(userId, symbol, shares, livePrice)
-      if (livePrice > 0) recordTransaction(userId, result.symbol, 'sell', shares, livePrice, 'agent')
+      const execPrice = livePrice || await fetchLivePrice(sym, contextBlock, tickersFetched)
+      const result = await sellStock(userId, sym, shares, execPrice)
+      if (execPrice > 0) recordTransaction(userId, result.symbol, 'sell', shares, execPrice, 'agent')
       const msg = result.removed
         ? `Sold all ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol} — position closed. ${reasoning}`
         : `Sold ${shares} share${shares !== 1 ? 's' : ''} of ${result.symbol}. ${result.shares} remaining. ${reasoning}`

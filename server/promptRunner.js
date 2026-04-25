@@ -17,11 +17,13 @@
  *   @AAPL:financials:quarterly → quarterly financial statements
  *
  *   @mcp:server_name:tool_name → capability grant (tool made available to LLM)
+ *   @email                     → native send_email capability backed by Resend
  */
 
 import pool from './db.js'
 import { callLLM } from './llm.js'
 import { getToolsFromServer, callMCPTool } from './mcp.js'
+import { sendPromptResultEmail } from './email.js'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -45,18 +47,34 @@ function isMarketOpen() {
 
 // ── Token constants ───────────────────────────────────────────────
 
-export const KNOWN_BUILTINS = ['date', 'time', 'day', 'user', 'market_status']
-export const KNOWN_KEYWORDS = ['portfolio', 'watchlist', 'market']
+export const KNOWN_BUILTINS = ['date', 'time', 'day', 'user', 'user_email', 'market_status']
+export const KNOWN_KEYWORDS = ['portfolio', 'watchlist', 'market', 'email']
+
+// Native capability tools (no MCP server required)
+const NATIVE_TOOLS = {
+  email: {
+    name:        'send_email',
+    description: 'Send an email to the user with the analysis results. Use this to deliver your findings.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', description: 'Email subject line' },
+        body:    { type: 'string', description: 'Email body — plain text, may include markdown-style formatting' },
+      },
+      required: ['subject', 'body'],
+    },
+  },
+}
 
 // Token regex — groups:
 //  1: builtin name        {{date}}
-//  2: mcp server slug     @mcp:server:tool
+//  2: mcp server slug     @mcp:server:tool  (spaces allowed via URL-encoded or quoted form)
 //  3: mcp tool name
 //  4: ticker (financials) @AAPL:financials[:quarterly]
 //  5: financials timeframe
-//  6: keyword             @portfolio | @watchlist | @market
+//  6: keyword             @portfolio | @watchlist | @market | @email
 //  7: plain ticker        @AAPL
-const TOKEN_RE = /\{\{(\w+)\}\}|@mcp:([a-zA-Z0-9_.-]+):([a-zA-Z0-9_.-]+)|@([A-Z]{1,5}):financials(?::(quarterly|annual))?|@(portfolio|watchlist|market)\b|@([A-Z]{1,5})\b/g
+const TOKEN_RE = /\{\{(\w+)\}\}|@mcp:([a-zA-Z0-9_ .-]+):([a-zA-Z0-9_.-]+)|@([A-Z]{1,5}):financials(?::(quarterly|annual))?|@(portfolio|watchlist|market|email)\b|@([A-Z]{1,5})\b/g
 
 // ── parseTokens ───────────────────────────────────────────────────
 
@@ -117,11 +135,10 @@ export async function validateTokens(tokens, userId) {
 
 // ── resolveBuiltins ───────────────────────────────────────────────
 
-function resolveBuiltins(userName) {
+function resolveBuiltins(userName, userEmail) {
   const now  = new Date()
   const pad  = n => String(n).padStart(2, '0')
   const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-  // ET time for market-relevant context
   const etStr  = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false })
   const etDate = new Date(etStr)
 
@@ -129,7 +146,8 @@ function resolveBuiltins(userName) {
     '{{date}}':          now.toISOString().slice(0, 10),
     '{{time}}':          `${pad(etDate.getHours())}:${pad(etDate.getMinutes())} ET`,
     '{{day}}':           DAYS[etDate.getDay()],
-    '{{user}}':          userName || 'User',
+    '{{user}}':          userName  || 'User',
+    '{{user_email}}':    userEmail || '',
     '{{market_status}}': isMarketOpen() ? 'Open' : 'Closed',
   }
 }
@@ -362,42 +380,61 @@ export async function runPromptTemplate({
   const polyKey = process.env.POLYGON_API_KEY
 
   // 1. Parse tokens
-  const tokens      = parseTokens(template)
-  const dataTokens  = tokens.filter(t => ['keyword', 'ticker', 'financials'].includes(t.type))
-  const mcpTokens   = tokens.filter(t => t.type === 'mcp')
+  const tokens       = parseTokens(template)
+  const dataTokens   = tokens.filter(t => ['keyword', 'ticker', 'financials'].includes(t.type))
+  const mcpTokens    = tokens.filter(t => t.type === 'mcp')
+  const hasEmail     = tokens.some(t => t.type === 'keyword' && t.name === 'email')
 
-  // 2. Resolve everything in parallel
+  // 2. Fetch user email if needed (for {{user_email}} built-in or @email capability)
+  let userEmail = ''
+  if (hasEmail || tokens.some(t => t.type === 'builtin' && t.name === 'user_email')) {
+    try {
+      const { rows: [u] } = await pool.query('SELECT email FROM users WHERE id=$1', [userId])
+      userEmail = u?.email ?? ''
+    } catch { /* non-fatal */ }
+  }
+
+  // 3. Resolve data + built-ins + MCP grants in parallel
   const [builtinMap, dataMap, mcpTools] = await Promise.all([
-    Promise.resolve(resolveBuiltins(userName)),
+    Promise.resolve(resolveBuiltins(userName, userEmail)),
     resolveDataTokens(dataTokens, userId, polyKey),
     collectMCPGrants(mcpTokens, userId),
   ])
 
-  // 3. MCP tokens → inline label in prompt text (so LLM knows what tools are available)
-  const mcpMap = {}
+  // 4. Build inline labels for @mcp and @email tokens
+  const capabilityMap = {}
   for (const t of mcpTokens) {
     const found = mcpTools.find(mt => mt._mcpToolName === t.tool || mt.name.endsWith(`_${t.tool}`))
-    mcpMap[t.raw] = found
+    capabilityMap[t.raw] = found
       ? `[Tool available: ${found.name}]`
       : `[Tool unavailable: ${t.raw}]`
   }
+  if (hasEmail) {
+    capabilityMap['@email'] = userEmail
+      ? `[Email tool available — will send to ${userEmail}]`
+      : `[Email tool available — send_email]`
+  }
 
-  // 4. Substitute all tokens into the template
-  const allResolutions = { ...builtinMap, ...dataMap, ...mcpMap }
+  // 5. Substitute all tokens into the template
+  const allResolutions = { ...builtinMap, ...dataMap, ...capabilityMap }
   const resolvedPrompt = substituteTokens(template, allResolutions)
 
-  // 5. Build tool schema list for the LLM (Anthropic format)
-  const toolSchemas = mcpTools.map(t => ({
-    name:         t.name,
-    description:  t.description,
-    input_schema: t.input_schema,
-  }))
+  // 6. Build tool schemas — MCP grants + native send_email if @email present
+  const toolSchemas = [
+    ...mcpTools.map(t => ({
+      name:         t.name,
+      description:  t.description,
+      input_schema: t.input_schema,
+    })),
+    ...(hasEmail ? [NATIVE_TOOLS.email] : []),
+  ]
 
-  // 6. Stateless LLM call — single system prompt, no agent.js infrastructure
+  // 7. Stateless LLM call
   const systemPrompt =
     'You are a financial analysis assistant. ' +
     'Answer the prompt thoroughly and concisely using the data provided. ' +
-    'Do not make up numbers — rely only on the data included in the prompt.'
+    'Do not make up numbers — rely only on the data included in the prompt.' +
+    (hasEmail ? ' When finished, use the send_email tool to deliver your analysis.' : '')
 
   const tokensResolved = tokens
     .filter(t => t.type !== 'mcp')
@@ -414,16 +451,8 @@ export async function runPromptTemplate({
       tools: toolSchemas.length > 0 ? toolSchemas : undefined,
     })
 
-    // No tool call → we're done
     if (!response.toolName) {
       finalText = response.text ?? ''
-      break
-    }
-
-    // Find which server/tool to call
-    const grantTool = mcpTools.find(mt => mt.name === response.toolName)
-    if (!grantTool) {
-      finalText = response.text ?? `[Tool not found: ${response.toolName}]`
       break
     }
 
@@ -431,16 +460,28 @@ export async function runPromptTemplate({
 
     let toolResult
     try {
-      toolResult = await callMCPTool(
-        { url: grantTool._mcpServerUrl, auth_header: grantTool._mcpAuthHeader },
-        grantTool._mcpToolName,
-        response.toolInput ?? {}
-      )
+      // Native send_email tool
+      if (response.toolName === 'send_email') {
+        const { subject, body } = response.toolInput ?? {}
+        await sendPromptResultEmail({ to: userEmail, subject, body })
+        toolResult = `Email sent to ${userEmail}`
+      } else {
+        // MCP tool
+        const grantTool = mcpTools.find(mt => mt.name === response.toolName)
+        if (!grantTool) {
+          finalText = response.text ?? `[Tool not found: ${response.toolName}]`
+          break
+        }
+        toolResult = await callMCPTool(
+          { url: grantTool._mcpServerUrl, auth_header: grantTool._mcpAuthHeader },
+          grantTool._mcpToolName,
+          response.toolInput ?? {}
+        )
+      }
     } catch (err) {
       toolResult = `Error: ${err.message}`
     }
 
-    // Append result and loop for follow-up
     userMessage = `${userMessage}\n\n[Tool result: ${response.toolName}]\n${toolResult}`
   }
 
@@ -448,6 +489,7 @@ export async function runPromptTemplate({
     text:           finalText,
     tokensResolved,
     toolCallsMade,
-    resolvedPrompt,  // useful for debugging / preview
+    resolvedPrompt,
+    emailedTo:      toolCallsMade.includes('send_email') ? userEmail : null,
   }
 }

@@ -40,10 +40,11 @@ import pool           from './db.js'
 import { verifyGoogleToken, exchangeGoogleCode, signJwt, authMiddleware } from './auth.js'
 import { OAuth2Client } from 'google-auth-library'
 import { requireRole, requirePermission, requireNonStudent, PERMISSIONS } from './rbac.js'
-import { runTradingAgent } from './agent.js'
+import { runTradingAgent, executeTrade, validateTrade } from './agent.js'
 import { getToolsFromServer, testServer } from './mcp.js'
 import { runPromptTemplate, validateTokens, parseTokens } from './promptRunner.js'
 import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextRun } from './agentPortfolio.js'
+import { startPromptScheduler } from './scheduler.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
 import marketRouter                    from './market.js'
@@ -933,6 +934,30 @@ app.post('/api/agent/trade',
   }
 )
 
+// ── Confirm pending trade ────────────────────────────────────────
+app.post('/api/agent/confirm-trade',
+  requirePermission(PERMISSIONS.TRADE),
+  async (req, res) => {
+    const { toolName, toolInput } = req.body
+    if (!toolName || !toolInput) return res.status(400).json({ error: 'toolName and toolInput are required' })
+    try {
+      // Re-validate at confirmation time — price or funds may have changed since
+      // the card was shown.
+      const { livePrice, blocker } = await validateTrade(toolName, toolInput, req.user.id)
+      if (blocker) return res.status(422).json({ error: blocker })
+
+      const result = await executeTrade({ toolName, toolInput, userId: req.user.id, livePrice })
+      if (result.trade) {
+        audit(req.user.id, `agent_${result.trade.action}`, { ...result.trade, confirmed: true }, req)
+      }
+      res.json(result)
+    } catch (err) {
+      console.error('Confirm trade error:', err.message)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
 // ── Agent Context (knowledge base entries injected into system prompt) ──
 app.get('/api/agent-context', authMiddleware, async (req, res) => {
   const { rows } = await pool.query(
@@ -1130,7 +1155,7 @@ async function fetchDatasets(userId, datasets = []) {
 
 app.get('/api/saved-prompts', authMiddleware, async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, title, description, message, context_snap, datasets, run_count, created_at, updated_at
+    `SELECT id, title, description, message, context_snap, datasets, schedule, run_count, created_at, updated_at
      FROM saved_prompts WHERE user_id=$1 ORDER BY created_at DESC`,
     [req.user.id]
   )
@@ -1151,8 +1176,8 @@ app.post('/api/saved-prompts', authMiddleware, async (req, res) => {
 })
 
 app.patch('/api/saved-prompts/:id', authMiddleware, async (req, res) => {
-  const jsonFields = new Set(['context_snap', 'datasets'])
-  const allowed    = ['title', 'description', 'message', 'context_snap', 'datasets']
+  const jsonFields = new Set(['context_snap', 'datasets', 'schedule'])
+  const allowed    = ['title', 'description', 'message', 'context_snap', 'datasets', 'schedule']
   const sets = [], vals = []
   let idx = 1
   for (const f of allowed) {
@@ -1167,7 +1192,7 @@ app.patch('/api/saved-prompts/:id', authMiddleware, async (req, res) => {
   const { rows: [row] } = await pool.query(
     `UPDATE saved_prompts SET ${sets.join(', ')}
      WHERE id=$${idx++} AND user_id=$${idx}
-     RETURNING id, title, description, message, context_snap, datasets, run_count, created_at, updated_at`,
+     RETURNING id, title, description, message, context_snap, datasets, schedule, run_count, created_at, updated_at`,
     vals
   )
   if (!row) return res.status(404).json({ error: 'Not found' })
@@ -2376,6 +2401,9 @@ app.delete('/api/agent-portfolio', authMiddleware, async (req, res) => {
 setInterval(() => {
   runScheduledRebalances(getLLMConfigForUser).catch(() => {})
 }, 5 * 60_000)
+
+// ── Prompt Scheduler ─────────────────────────────────────────────
+startPromptScheduler()
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {

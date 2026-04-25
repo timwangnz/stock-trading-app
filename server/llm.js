@@ -38,9 +38,9 @@ export const PROVIDERS = {
   google: {
     label:  'Google (Gemini)',
     models: [
-      { id: 'gemini-2.0-flash',    label: 'Gemini 2.0 Flash — fast & cheap' },
-      { id: 'gemini-1.5-flash',    label: 'Gemini 1.5 Flash — balanced'     },
-      { id: 'gemini-1.5-pro',      label: 'Gemini 1.5 Pro — most capable'   },
+      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite — free tier, fastest' },
+      { id: 'gemini-2.5-flash',      label: 'Gemini 2.5 Flash — free tier, balanced'     },
+      { id: 'gemini-2.5-pro',        label: 'Gemini 2.5 Pro — paid only, most capable'   },
     ],
   },
   ollama: {
@@ -60,6 +60,7 @@ export const PROVIDERS = {
 
 /** Anthropic format → OpenAI function-calling format */
 function toOpenAITools(tools) {
+  if (!tools?.length) return []
   return tools.map(t => ({
     type: 'function',
     function: {
@@ -72,6 +73,7 @@ function toOpenAITools(tools) {
 
 /** Anthropic format → Gemini functionDeclarations format */
 function toGeminiTools(tools) {
+  if (!tools?.length) return []
   return [{
     functionDeclarations: tools.map(t => ({
       name:        t.name,
@@ -157,19 +159,37 @@ async function callGemini({ apiKey, model, systemPrompt, userMessage, tools }) {
   if (!apiKey) throw new Error('No Google API key configured.')
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+  const geminiTools = toGeminiTools(tools)
+
+  const body = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents:           [{ role: 'user', parts: [{ text: userMessage }] }],
+    generationConfig:   { maxOutputTokens: 1024 },
+  }
+  if (geminiTools.length) {
+    body.tools       = geminiTools
+    body.tool_config = { function_calling_config: { mode: 'AUTO' } }
+  }
+
   const res = await fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents:           [{ role: 'user', parts: [{ text: userMessage }] }],
-      tools:              toGeminiTools(tools),
-    }),
+    body:    JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(`Gemini ${res.status}: ${errText}`)
+  }
   const data = await res.json()
 
-  const parts    = data.candidates?.[0]?.content?.parts ?? []
+  // Safety check — Gemini can return SAFETY or RECITATION finish reasons with no content
+  const candidate = data.candidates?.[0]
+  if (!candidate?.content) {
+    const reason = candidate?.finishReason ?? 'unknown'
+    throw new Error(`Gemini returned no content (finishReason: ${reason})`)
+  }
+
+  const parts    = candidate.content.parts ?? []
   const fnCall   = parts.find(p => p.functionCall)?.functionCall
   const textPart = parts.find(p => p.text)
   return {
