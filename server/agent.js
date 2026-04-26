@@ -110,15 +110,55 @@ async function fetchNewsForTicker(symbol, apiKey) {
 }
 
 /**
+ * Fetch general market news from Polygon (no ticker filter).
+ * Used when the user asks broad questions like "what's the latest?".
+ */
+async function fetchGeneralMarketNews(apiKey, limit = 5) {
+  try {
+    const res = await fetch(
+      `https://api.polygon.io/v2/reference/news?limit=${limit}&sort=published_utc&order=desc&apiKey=${apiKey}`,
+      { signal: AbortSignal.timeout(5000) }
+    )
+    if (!res.ok) return null
+    const data    = await res.json()
+    const results = data.results ?? []
+    if (results.length === 0) return null
+
+    const lines = results.map(a => {
+      const diff = Date.now() - new Date(a.published_utc).getTime()
+      const h    = Math.floor(diff / 3_600_000)
+      const age  = h < 1 ? 'just now' : h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
+      const tickers = (a.tickers ?? []).slice(0, 3).join(', ')
+      return `  • [${age}]${tickers ? ` (${tickers})` : ''} ${a.title}` +
+             (a.description ? ` — ${a.description.slice(0, 120)}…` : '')
+    })
+
+    return '[General Market News — latest from Polygon.io]\n' + lines.join('\n')
+  } catch {
+    return null
+  }
+}
+
+/**
  * Fetch current price snapshots for a list of tickers directly from Polygon,
  * and (in parallel) the latest 3 news headlines for each ticker.
  * Returns a formatted context block ready to inject into the system prompt,
  * plus the list of tickers that were successfully fetched.
  * Returns null if POLYGON_API_KEY is unset or no tickers are provided.
  */
-async function fetchLiveMarketContext(tickers) {
+async function fetchLiveMarketContext(tickers, { generalNews = false } = {}) {
   const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
-  if (!key || tickers.length === 0) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
+  if (!key) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
+
+  // No specific tickers — just fetch general market news if requested
+  if (tickers.length === 0) {
+    if (!generalNews) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
+    const newsBlock = await fetchGeneralMarketNews(key)
+    const contextBlock = newsBlock
+      ? '📰 LATEST MARKET NEWS (from Polygon.io — published within the last 24h):\n\n' + newsBlock
+      : null
+    return { contextBlock, priceBlock: null, tickersFetched: [], newsArticles: [] }
+  }
 
   const uniqueSyms = [...new Set(tickers)].slice(0, 5)
   const syms       = uniqueSyms.join(',')
@@ -410,20 +450,20 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
   // ── Step 1: extract tickers ──────────────────────────────────────
   const portfolioTickers = (portfolio ?? []).map(h => h.symbol).filter(Boolean)
   let   candidateTickers = extractTickers(message)
-  const isPortfolioQuery = /\b(portfolio|holdings?|positions?|my stock|mine)\b/i.test(message)
-  if (candidateTickers.length === 0 && isPortfolioQuery) {
-    candidateTickers = portfolioTickers
-  }
 
   // ── Step 2: detect intent ─────────────────────────────────────────
-  // Trade commands need prices only. Research/news queries benefit from
-  // MCP search tools. No point calling Tavily for "buy 10 GOOGL".
-  //
-  // isTradeCommand requires explicit quantity/action syntax so that
-  // advisory questions like "should I buy AAPL?" don't trigger trades.
   const isTradeCommand   = /\b(buy\s+[\d.]+|sell\s+([\d.]+|half|all)|remove|close\s+(my\s+)?[A-Z]{1,5}|exit)\b/i.test(message)
   const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think|last (week|friday|monday|tuesday|wednesday|thursday|saturday|sunday|month|year|quarter)|yesterday|performance|how did|what did|what happened|happened|did .* open|is .* open|market open|market close|after.?hours|pre.?market|this week|today.s|this morning)\b/i.test(message)
+  const isPortfolioQuery = /\b(portfolio|holdings?|positions?|my stock|mine)\b/i.test(message)
   const needsMCPSearch   = !isTradeCommand && isResearchQuery
+
+  // When no tickers found, fall back to portfolio holdings for research/portfolio queries
+  if (candidateTickers.length === 0 && (isPortfolioQuery || (isResearchQuery && portfolioTickers.length > 0))) {
+    candidateTickers = portfolioTickers.slice(0, 5)
+  }
+
+  // Flag general market news when user asks broadly with no specific tickers
+  const needsGeneralNews = !isTradeCommand && isResearchQuery && candidateTickers.length === 0
 
   // ── Step 3: collect MCP tool definitions ─────────────────────────
   const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
@@ -437,7 +477,7 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
 
   // ── Step 4: pre-fetch relevant context sources in parallel ────────
   const [marketCtx, ...mcpResults] = await Promise.allSettled([
-    fetchLiveMarketContext(candidateTickers),
+    fetchLiveMarketContext(candidateTickers, { generalNews: needsGeneralNews }),
     ...searchTools.map(tool => {
       const query = candidateTickers.length > 0
         ? `${message} ${candidateTickers.join(' ')}`
@@ -478,8 +518,12 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
 
   const systemPrompt = `You are a knowledgeable trading assistant for TradeBuddy.
 Help the user with anything trading or markets related — market hours, news, analysis, general finance questions, and portfolio management.
-You can execute trades and answer general knowledge questions. When external or real-time data has been fetched via MCP tools, it will appear below — use it to answer precisely.
-If no external data is available and you are uncertain, say so briefly and suggest the user connect a search MCP server for live lookups.
+You can execute trades and answer general knowledge questions.
+
+IMPORTANT — live data rules:
+- If live prices or news appear in this prompt (marked 📈 or 📰), they are REAL data fetched right now from Polygon.io. Use them confidently. Never say you "cannot access" or "don't have" real-time data when it is shown below.
+- If no live data appears below AND the user asks about current prices/news, briefly acknowledge you don't have a live feed for that specific query and suggest they ask about a specific ticker (e.g. "What's the news on AAPL?") or connect a search MCP server.
+- When MCP search results appear (marked 📡), use them to answer precisely.
 Today is ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' })} ET.
 
 Current portfolio:
