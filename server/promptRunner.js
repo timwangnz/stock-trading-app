@@ -24,6 +24,7 @@ import pool from './db.js'
 import { callLLM } from './llm.js'
 import { getToolsFromServer, callMCPTool } from './mcp.js'
 import { sendPromptResultEmail } from './email.js'
+import { getAppSetting } from './appSettings.js'
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -377,7 +378,7 @@ export async function runPromptTemplate({
   llmConfig,
   maxTools = 5,
 }) {
-  const polyKey = process.env.POLYGON_API_KEY
+  const polyKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
 
   // 1. Parse tokens
   const tokens       = parseTokens(template)

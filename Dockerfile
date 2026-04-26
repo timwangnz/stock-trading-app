@@ -9,12 +9,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# Declare build-time variables (Railway passes env vars as build args)
-# These get baked into the Vite bundle at build time.
-ARG VITE_GOOGLE_CLIENT_ID
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
-
 # Copy source and build
+# (Google Client ID and other API keys are no longer baked in at build time —
+#  they are configured by the admin in App Settings after first boot.)
 COPY . .
 RUN npm run build
 # Output: /app/dist

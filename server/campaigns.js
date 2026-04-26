@@ -13,9 +13,18 @@
 import pool           from './db.js'
 import { callLLM }   from './llm.js'
 import { Resend }    from 'resend'
+import { getAppSetting } from './appSettings.js'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-const FROM   = process.env.EMAIL_FROM || 'TradeBuddy <onboarding@resend.dev>'
+// Resend client is initialised lazily on first send so the key can be
+// configured in the app after first boot rather than requiring it in .env.
+async function getResend() {
+  const key = await getAppSetting('resend_api_key', 'RESEND_API_KEY')
+  if (!key) return null
+  return new Resend(key)
+}
+async function getFrom() {
+  return await getAppSetting('email_from', 'EMAIL_FROM') || 'TradeBuddy <onboarding@resend.dev>'
+}
 
 // ── Audience filter schema ────────────────────────────────────────
 //
@@ -262,7 +271,13 @@ async function sendCampaignEmail({ to, subject, body }) {
     </div>
   `
 
-  await resend.emails.send({ from: FROM, to, subject, html })
+  const client = await getResend()
+  if (!client) {
+    console.warn('[campaigns] Resend not configured — skipping email to', to)
+    return
+  }
+  const from = await getFrom()
+  await client.emails.send({ from, to, subject, html })
 }
 
 // ── executeCampaign ───────────────────────────────────────────────

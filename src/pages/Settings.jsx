@@ -2,10 +2,11 @@
  * Settings.jsx — My Keys & Integrations
  *
  * A single place for all user-owned credentials:
- *   • AI Provider  — LLM provider + API key (powers agent, prompts, AI portfolio)
- *   • MCP Servers  — external tool servers for the Trading Agent
- *   • Market Data  — Polygon API key (server-managed now, per-user in future)
- *   • Email        — Resend API key (server-managed now, per-user in future)
+ *   • AI Provider   — LLM provider + API key (powers agent, prompts, AI portfolio)
+ *   • MCP Servers   — external tool servers for the Trading Agent
+ *   • Market Data   — Polygon API key (server-managed now, per-user in future)
+ *   • Email         — Resend API key (server-managed now, per-user in future)
+ *   • App Settings  — admin-only: Polygon, Google OAuth, Resend, alert email
  */
 
 import { useState, useEffect } from 'react'
@@ -13,10 +14,11 @@ import {
   KeyRound, Sparkles, Plug, BarChart2, Mail,
   Eye, EyeOff, CheckCircle2, AlertCircle, ChevronDown,
   Plus, Trash2, RefreshCw, ToggleLeft, ToggleRight, ExternalLink,
-  Lock, Loader2, Server,
+  Lock, Loader2, Server, Settings2, Save,
 } from 'lucide-react'
 import { getLLMSettings, saveLLMSettings } from '../services/apiService'
 import { useKeys } from '../context/KeysContext'
+import { useAuth } from '../context/AuthContext'
 import clsx from 'clsx'
 
 // ── Shared helpers ────────────────────────────────────────────────
@@ -418,16 +420,177 @@ function EmailCard() {
   )
 }
 
-// ── Page ──────────────────────────────────────────────────────────
+// ── App Settings card (admin only) ────────────────────────────────
 
-const TABS = [
-  { id: 'llm',    label: 'AI Provider',  icon: Sparkles,  color: 'text-accent-blue' },
-  { id: 'mcp',    label: 'MCP Servers',  icon: Plug,      color: 'text-purple-400'  },
-  { id: 'market', label: 'Market Data',  icon: BarChart2, color: 'text-gain'        },
-  { id: 'email',  label: 'Email',        icon: Mail,      color: 'text-orange-400'  },
+const APP_SETTING_DEFS = [
+  {
+    group: 'Market Data',
+    icon: BarChart2,
+    iconColor: 'text-gain',
+    items: [
+      { key: 'polygon_api_key', label: 'Polygon API Key', secret: true,
+        hint: 'Required for live prices, charts, and news.', link: 'https://polygon.io/dashboard/api-keys' },
+    ],
+  },
+  {
+    group: 'Google OAuth',
+    icon: KeyRound,
+    iconColor: 'text-yellow-400',
+    items: [
+      { key: 'google_client_id',     label: 'Google Client ID',     secret: true,
+        hint: 'Enables "Sign in with Google". Restart frontend after saving.', link: 'https://console.cloud.google.com/apis/credentials' },
+      { key: 'google_client_secret', label: 'Google Client Secret', secret: true,
+        hint: 'Required for the server-side OAuth code exchange.' },
+    ],
+  },
+  {
+    group: 'Email (Resend)',
+    icon: Mail,
+    iconColor: 'text-orange-400',
+    items: [
+      { key: 'resend_api_key', label: 'Resend API Key', secret: true,
+        hint: 'Used for password resets, class invites, and prompt emails.', link: 'https://resend.com/api-keys' },
+      { key: 'email_from',     label: 'From Address',   secret: false,
+        hint: 'e.g. TradeBuddy <noreply@yourdomain.com>  (defaults to Resend sandbox)' },
+    ],
+  },
+  {
+    group: 'Alerts',
+    icon: AlertCircle,
+    iconColor: 'text-red-400',
+    items: [
+      { key: 'snapshot_alert_email', label: 'Snapshot Alert Email', secret: false,
+        hint: 'Where to send daily snapshot failure notifications.' },
+    ],
+  },
 ]
 
+function AppSettingField({ def, currentValue, onSave }) {
+  const [val, setVal]       = useState('')
+  const [show, setShow]     = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved]   = useState(false)
+  const [err, setErr]       = useState(null)
+
+  const handleSave = async () => {
+    setSaving(true); setErr(null)
+    try {
+      const token = localStorage.getItem('tradebuddy_token')
+      const res = await fetch(`/api/admin/app-settings/${def.key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ value: val }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
+      setSaved(true); setVal(''); setTimeout(() => setSaved(false), 2000)
+      onSave?.()
+    } catch (e) { setErr(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-primary">{def.label}</label>
+        <div className="flex items-center gap-2">
+          {currentValue?.configured && (
+            <span className="flex items-center gap-1 text-xs text-gain">
+              <CheckCircle2 size={10} /> Configured
+            </span>
+          )}
+          {def.link && (
+            <a href={def.link} target="_blank" rel="noreferrer"
+               className="text-xs text-accent-blue hover:underline flex items-center gap-0.5">
+              Get key <ExternalLink size={9} />
+            </a>
+          )}
+        </div>
+      </div>
+      {def.hint && <p className="text-xs text-muted">{def.hint}</p>}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <input
+            type={def.secret && !show ? 'password' : 'text'}
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            placeholder={currentValue?.configured ? '••••••••  (leave blank to keep current)' : 'Enter value…'}
+            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-primary
+                       placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue pr-8"
+          />
+          {def.secret && (
+            <button onClick={() => setShow(s => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary">
+              {show ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+          )}
+        </div>
+        <button onClick={handleSave} disabled={saving || !val}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-blue text-white text-xs
+                           font-medium disabled:opacity-40 hover:bg-accent-blue/90 transition-colors">
+          {saving ? <Loader2 size={12} className="animate-spin" /> : saved ? <CheckCircle2 size={12} /> : <Save size={12} />}
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+    </div>
+  )
+}
+
+function AppSettingsCard() {
+  const [settings, setSettings] = useState({})
+  const [loading, setLoading]   = useState(true)
+
+  const load = async () => {
+    try {
+      const token = localStorage.getItem('tradebuddy_token')
+      const res = await fetch('/api/admin/app-settings', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) setSettings(await res.json())
+    } catch {}
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  if (loading) return (
+    <div className="flex justify-center py-12">
+      <Loader2 size={20} className="animate-spin text-muted" />
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {APP_SETTING_DEFS.map(group => (
+        <Card key={group.group} icon={group.icon} iconColor={group.iconColor} title={group.group}>
+          <div className="space-y-5">
+            {group.items.map(def => (
+              <AppSettingField key={def.key} def={def} currentValue={settings[def.key]} onSave={load} />
+            ))}
+          </div>
+        </Card>
+      ))}
+      <p className="text-xs text-muted text-center pt-2">
+        Changes take effect immediately — no server restart needed.
+      </p>
+    </div>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────
+
 export default function Settings() {
+  const { user } = useAuth()
+  const isAdmin  = user?.role === 'admin'
+
+  const TABS = [
+    { id: 'llm',    label: 'AI Provider',  icon: Sparkles,  color: 'text-accent-blue' },
+    { id: 'mcp',    label: 'MCP Servers',  icon: Plug,      color: 'text-purple-400'  },
+    { id: 'market', label: 'Market Data',  icon: BarChart2, color: 'text-gain'        },
+    { id: 'email',  label: 'Email',        icon: Mail,      color: 'text-orange-400'  },
+    ...(isAdmin ? [{ id: 'app', label: 'App Settings', icon: Settings2, color: 'text-red-400' }] : []),
+  ]
+
   const [activeTab, setActiveTab] = useState('llm')
   const active = TABS.find(t => t.id === activeTab)
 
@@ -473,6 +636,7 @@ export default function Settings() {
           {activeTab === 'mcp'    && <MCPCard />}
           {activeTab === 'market' && <MarketDataCard />}
           {activeTab === 'email'  && <EmailCard />}
+          {activeTab === 'app'    && <AppSettingsCard />}
         </div>
       </div>
 

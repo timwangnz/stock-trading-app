@@ -20,6 +20,7 @@
 
 import { Router } from 'express'
 import { cacheGet, cacheSet, TTL } from './cache.js'
+import { getAppSetting } from './appSettings.js'
 
 const router = Router()
 const BASE   = 'https://api.polygon.io'
@@ -28,8 +29,8 @@ const SYMBOL_RE = /^[A-Z0-9.]{1,10}$/
 function validSymbol(s) { return SYMBOL_RE.test((s ?? '').toUpperCase()) }
 
 async function polyFetch(path) {
-  const key = process.env.POLYGON_API_KEY
-  if (!key) throw new Error('POLYGON_API_KEY is not set on the server')
+  const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
+  if (!key) throw new Error('Polygon API key not configured — add it in Admin → App Settings')
   const sep = path.includes('?') ? '&' : '?'
   const res = await fetch(`${BASE}${path}${sep}apiKey=${key}`)
   if (!res.ok) {

@@ -15,6 +15,7 @@ import { dirname, join } from 'path'
 import pool from './db.js'
 import { callLLM } from './llm.js'
 import { callMCPTool } from './mcp.js'
+import { getAppSetting } from './appSettings.js'
 
 // Load the user guide once at startup so the agent can answer UI how-to questions
 const __dir      = dirname(fileURLToPath(import.meta.url))
@@ -116,7 +117,7 @@ async function fetchNewsForTicker(symbol, apiKey) {
  * Returns null if POLYGON_API_KEY is unset or no tickers are provided.
  */
 async function fetchLiveMarketContext(tickers) {
-  const key = process.env.POLYGON_API_KEY
+  const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
   if (!key || tickers.length === 0) return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
 
   const uniqueSyms = [...new Set(tickers)].slice(0, 5)
@@ -571,7 +572,7 @@ export async function fetchLivePrice(symbol, contextBlock = null, tickersFetched
 
   // 2. Fall back to a fresh Polygon snapshot
   try {
-    const key = process.env.POLYGON_API_KEY
+    const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
     if (!key) return 0
     const r = await fetch(
       `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${sym}&apiKey=${key}`,

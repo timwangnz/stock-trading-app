@@ -7,6 +7,7 @@
 
 import { Router } from 'express'
 import pool       from './db.js'
+import { getAppSetting } from './appSettings.js'
 
 export const ideasRouter = Router()
 
@@ -74,7 +75,7 @@ ideasRouter.post('/', async (req, res) => {
     )
 
     // Fetch live entry price from Polygon via server-side call
-    const apiKey = process.env.POLYGON_API_KEY
+    const apiKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
     let entryPrice = parseFloat(target_price) // fallback
     if (apiKey) {
       try {
@@ -229,7 +230,7 @@ ideasRouter.post('/resolve', async (req, res) => {
     )
     if (!pending.length) return res.json({ resolved: 0 })
 
-    const apiKey = process.env.POLYGON_API_KEY
+    const apiKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
     let resolved = 0
 
     for (const idea of pending) {

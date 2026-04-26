@@ -5,16 +5,33 @@
  */
 
 import { Resend } from 'resend'
+import { getAppSetting } from './appSettings.js'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// Resend client is initialised lazily so the key can be configured in the app
+// after first boot rather than requiring it in .env at install time.
+async function getResend() {
+  const key = await getAppSetting('resend_api_key', 'RESEND_API_KEY')
+  if (!key) return null
+  return new Resend(key)
+}
 
-// The "from" address must be a verified domain in your Resend account.
-// During development you can use Resend's shared domain: onboarding@resend.dev
-const FROM = process.env.EMAIL_FROM || 'TradeBuddy <onboarding@resend.dev>'
+async function getFrom() {
+  return await getAppSetting('email_from', 'EMAIL_FROM') || 'TradeBuddy <onboarding@resend.dev>'
+}
+
+// Shared send helper — silently skips if Resend is not configured
+async function sendEmail(payload) {
+  const client = await getResend()
+  if (!client) {
+    console.warn('[email] Resend not configured — skipping email to', payload.to)
+    return
+  }
+  const from = await getFrom()
+  await client.emails.send({ ...payload, from })
+}
 
 export async function sendClassInviteEmail({ to, className, schoolName, teacherName, joinUrl }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: `You're invited to join ${className} on TradeBuddy`,
     html: `
@@ -41,8 +58,7 @@ export async function sendClassInviteEmail({ to, className, schoolName, teacherN
 }
 
 export async function sendTeacherApprovedEmail({ to, name, appUrl }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: '🎉 Your TradeBuddy teacher account is approved!',
     html: `
@@ -67,8 +83,7 @@ export async function sendTeacherApprovedEmail({ to, name, appUrl }) {
 }
 
 export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: 'TradeBuddy teacher application update',
     html: `
@@ -94,8 +109,7 @@ export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
 }
 
 export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalUsers }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: `⚠️ TradeBuddy snapshot failures — ${date}`,
     html: `
@@ -125,8 +139,7 @@ export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalU
  * Called by the @email capability token when the LLM invokes send_email.
  */
 export async function sendPromptResultEmail({ to, subject, body }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: subject || 'TradeBuddy Prompt Result',
     html: `
@@ -145,8 +158,7 @@ export async function sendPromptResultEmail({ to, subject, body }) {
 }
 
 export async function sendPasswordResetEmail({ to, name, resetUrl }) {
-  await resend.emails.send({
-    from:    FROM,
+  await sendEmail({
     to,
     subject: 'Reset your TradeBuddy password',
     html: `

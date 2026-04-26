@@ -47,6 +47,7 @@ import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextR
 import { startPromptScheduler } from './scheduler.js'
 import { log as audit } from './audit.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
+import { getAppSetting, setAppSetting, getAllAppSettings } from './appSettings.js'
 import marketRouter                    from './market.js'
 import financialsRouter                from './financials.js'
 import { classRouter, leaderboardRouter, groupRouter } from './classes.js'
@@ -192,8 +193,8 @@ app.get('/api/health', async (_req, res) => {
 
 // ── Google OAuth redirect flow ───────────────────────────────────
 // Step 1 — redirect browser to Google's consent screen
-app.get('/api/auth/google/redirect', (req, res) => {
-  const clientId    = process.env.GOOGLE_CLIENT_ID
+app.get('/api/auth/google/redirect', async (req, res) => {
+  const clientId    = await getAppSetting('google_client_id', 'GOOGLE_CLIENT_ID')
   const redirectUri = process.env.APP_URL + '/api/auth/google/callback'
   const params = new URLSearchParams({
     client_id:     clientId,
@@ -213,8 +214,8 @@ app.get('/api/auth/google/callback', async (req, res) => {
   if (!code) return res.redirect(`${appUrl}/?auth_error=missing_code`)
 
   try {
-    const clientId     = process.env.GOOGLE_CLIENT_ID
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+    const clientId     = await getAppSetting('google_client_id', 'GOOGLE_CLIENT_ID')
+    const clientSecret = await getAppSetting('google_client_secret', 'GOOGLE_CLIENT_SECRET')
     const redirectUri  = appUrl + '/api/auth/google/callback'
 
     const client = new OAuth2Client(clientId, clientSecret, redirectUri)
@@ -584,6 +585,17 @@ app.post('/api/internal/snapshot-all', async (req, res) => {
   }
 })
 
+// ── Public config endpoint (no auth — must be before authMiddleware) ──
+// Returns non-secret runtime config needed by the frontend before sign-in.
+app.get('/api/config', async (_req, res) => {
+  try {
+    const googleClientId = await getAppSetting('google_client_id', 'GOOGLE_CLIENT_ID')
+    res.json({ googleClientId: googleClientId || null })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── All routes below require a valid JWT ────────────────────────
 app.use('/api', authMiddleware)
 
@@ -647,8 +659,8 @@ async function adjustCash(userId, delta) {
 }
 
 async function fetchLivePrice(symbol) {
-  const key = process.env.POLYGON_API_KEY
-  if (!key) throw new Error('POLYGON_API_KEY not set')
+  const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
+  if (!key) throw new Error('Polygon API key not configured — add it in Admin → App Settings')
   const res = await fetch(
     `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${symbol}&apiKey=${key}`
   )
@@ -1046,7 +1058,7 @@ function fmtBig(n) {
  * Returns an array of strings that get joined and prepended to the system prompt.
  */
 async function fetchDatasets(userId, datasets = []) {
-  const polyKey = process.env.POLYGON_API_KEY
+  const polyKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
   const parts   = []
 
   for (const ds of datasets) {
@@ -1414,8 +1426,40 @@ app.put('/api/settings/llm', authMiddleware, async (req, res) => {
   }
 })
 
+
 // ── Admin endpoints ─────────────────────────────────────────────
 const adminOnly = requireRole('admin')
+
+// GET /api/admin/app-settings — list all configured settings (values hidden)
+app.get('/api/admin/app-settings', adminOnly, async (_req, res) => {
+  try {
+    const settings = await getAllAppSettings()
+    res.json(settings)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/admin/app-settings/:key — upsert a single setting
+// Sensitive keys are encrypted at rest; pass value='' to clear.
+const ENCRYPTED_SETTINGS = new Set([
+  'polygon_api_key',
+  'google_client_id',
+  'google_client_secret',
+  'resend_api_key',
+])
+app.put('/api/admin/app-settings/:key', adminOnly, async (req, res) => {
+  const { key } = req.params
+  const { value } = req.body
+  if (typeof value === 'undefined') return res.status(400).json({ error: 'value is required' })
+  try {
+    const encrypted = ENCRYPTED_SETTINGS.has(key)
+    await setAppSetting(key, value || null, encrypted)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // GET /api/admin/server-logs — live in-memory request + error log
 app.get('/api/admin/server-logs', adminOnly, (req, res) => {
@@ -1522,7 +1566,7 @@ app.get('/api/admin/users/:id/watchlist', adminOnly, async (req, res) => {
  * Fails-open so a Polygon outage never blocks the scheduler.
  */
 async function isTradingDay() {
-  const apiKey = process.env.POLYGON_API_KEY
+  const apiKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
   if (!apiKey) return true
   try {
     const res = await fetch(
@@ -1545,8 +1589,8 @@ async function isTradingDay() {
  * Uses day.c (live close) and falls back to prevDay.c.
  */
 async function fetchPriceMap(symbols) {
-  const apiKey = process.env.POLYGON_API_KEY
-  if (!apiKey) throw new Error('POLYGON_API_KEY not set')
+  const apiKey = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
+  if (!apiKey) throw new Error('Polygon API key not configured — add it in Admin → App Settings')
   const syms = [...new Set(symbols)].join(',')
   const res  = await fetch(
     `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms}&apiKey=${apiKey}`,
@@ -2149,12 +2193,12 @@ async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null }
         `[snapshot-scheduler] All ${maxAttempts} attempts exhausted. ` +
         `${failedIds.length} user(s) not snapshotted today: ${failedIds.join(', ')}`
       )
-      sendSnapshotFailureEmail({
-        to: SNAPSHOT_ALERT_EMAIL,
+      getSnapshotAlertEmail().then(to => sendSnapshotFailureEmail({
+        to,
         date,
         failedUserIds: failedIds,
         totalUsers: ids.length,
-      }).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
+      })).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
     }
   } catch (err) {
     // Catastrophic failure (e.g. DB down or Polygon unreachable) — retry the whole run
@@ -2166,12 +2210,12 @@ async function runDailySnapshot({ attempt = 1, maxAttempts = 3, userIds = null }
     } else {
       const date = new Date().toISOString().split('T')[0]
       console.error('[snapshot-scheduler] All retry attempts exhausted — giving up for today')
-      sendSnapshotFailureEmail({
-        to: SNAPSHOT_ALERT_EMAIL,
+      getSnapshotAlertEmail().then(to => sendSnapshotFailureEmail({
+        to,
         date,
         failedUserIds: userIds ?? ['unknown — catastrophic failure'],
         totalUsers: userIds?.length ?? 0,
-      }).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
+      })).catch(e => console.error('[snapshot-scheduler] Could not send failure email:', e.message))
     }
   }
 }
@@ -2237,7 +2281,9 @@ function msUntilNext(hour, minute, tz) {
  * Schedules runDailySnapshot() on the next weekday at snapshotHour:snapshotMinute ET,
  * then reschedules itself for the following day.
  */
-const SNAPSHOT_ALERT_EMAIL = process.env.SNAPSHOT_ALERT_EMAIL || 'anpwang@gmail.com'
+async function getSnapshotAlertEmail() {
+  return await getAppSetting('snapshot_alert_email', 'SNAPSHOT_ALERT_EMAIL') || 'anpwang@gmail.com'
+}
 const SNAPSHOT_TZ          = 'America/New_York'
 const SNAPSHOT_HOUR   = 16   // 4 PM
 const SNAPSHOT_MINUTE = 15   // :15

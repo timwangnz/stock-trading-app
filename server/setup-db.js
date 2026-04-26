@@ -572,6 +572,19 @@ async function setup() {
   await client.query(`CREATE INDEX IF NOT EXISTS idx_campaign_sends_user     ON campaign_sends (user_id)`)
   console.log('✅ Table "campaign_sends" ready')
 
+  // ── app_settings ──────────────────────────────────────────────
+  // Admin-configurable server-level settings (API keys, OAuth credentials, etc.)
+  // Sensitive values are AES-256-GCM encrypted; the encrypted column flags them.
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key        VARCHAR(100) PRIMARY KEY,
+      value      TEXT,
+      encrypted  BOOLEAN      NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  console.log('✅ Table "app_settings" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

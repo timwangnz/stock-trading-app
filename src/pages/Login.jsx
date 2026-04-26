@@ -5,8 +5,8 @@
  *   2. Email + Password (with a Sign Up / Sign In toggle)
  */
 
-import { useState } from 'react'
-import { useGoogleLogin } from '@react-oauth/google'
+import { useState, useEffect } from 'react'
+import { useGoogleLogin, GoogleOAuthProvider } from '@react-oauth/google'
 import { useAuth } from '../context/AuthContext'
 import { Eye, EyeOff, CheckCircle2, ArrowLeft } from 'lucide-react'
 import { forgotPassword } from '../services/apiService'
@@ -253,13 +253,16 @@ function GoogleSignInButton({ onSuccess, onError }) {
   )
 }
 
-// Google Sign-In is only available when a client ID was baked in at build time
-const HAS_GOOGLE = !!import.meta.env.VITE_GOOGLE_CLIENT_ID
-
 // ── Main Login page ─────────────────────────────────────────────
-export default function Login() {
-  const { loginWithToken }      = useAuth()
-  const [tab, setTab]           = useState(HAS_GOOGLE ? 'google' : 'email')
+function Login({ clientId = '' }) {
+  const { loginWithToken } = useAuth()
+  const HAS_GOOGLE         = !!clientId
+  const [tab, setTab]      = useState(clientId ? 'google' : 'email')
+
+  // If clientId arrives after mount (async fetch), switch to google tab
+  useEffect(() => {
+    if (clientId) setTab('google')
+  }, [clientId])
   const [error, setError]       = useState(null)
   const [forgotMode, setForgotMode] = useState(false)
 
@@ -334,5 +337,24 @@ export default function Login() {
         Your data is private and tied to your account.
       </p>
     </div>
+  )
+}
+
+// Wrap with GoogleOAuthProvider using the runtime client ID so it stays
+// in sync with whatever the admin configures in App Settings.
+export default function LoginWithProvider() {
+  const [clientId, setClientId] = useState('')
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.ok ? r.json() : {})
+      .then(cfg => setClientId(cfg.googleClientId || ''))
+      .catch(() => {})
+  }, [])
+
+  return (
+    <GoogleOAuthProvider clientId={clientId}>
+      <Login clientId={clientId} />
+    </GoogleOAuthProvider>
   )
 }

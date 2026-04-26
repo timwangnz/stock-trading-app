@@ -10,6 +10,7 @@
 import jwt              from 'jsonwebtoken'
 import { OAuth2Client } from 'google-auth-library'
 import dotenv           from 'dotenv'
+import { getAppSetting } from './appSettings.js'
 
 dotenv.config({ path: new URL('../.env', import.meta.url).pathname })
 
@@ -19,15 +20,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production'
 /**
  * Verify the Google ID token the frontend sends after the user clicks
  * "Sign in with Google".  Returns the user's profile from Google.
- *
- * NOTE: We read GOOGLE_CLIENT_ID inside the function (not at module load time)
- * to avoid ES module hoisting issues where the env var could be undefined
- * before dotenv has finished populating process.env.
+ * Reads the client ID from DB app_settings (falls back to env var).
  */
 export async function verifyGoogleToken(idToken) {
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  const client   = new OAuth2Client(clientId)
-
+  const clientId = await getAppSetting('google_client_id', 'GOOGLE_CLIENT_ID')
+  if (!clientId) throw new Error('Google Client ID not configured')
+  const client  = new OAuth2Client(clientId)
   const ticket  = await client.verifyIdToken({ idToken, audience: clientId })
   const payload = ticket.getPayload()
   return {
@@ -44,9 +42,10 @@ export async function verifyGoogleToken(idToken) {
  * Used by the useGoogleLogin popup flow (redirect_uri = 'postmessage').
  */
 export async function exchangeGoogleCode(code) {
-  const clientId     = process.env.GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-  const client       = new OAuth2Client(clientId, clientSecret, 'postmessage')
+  const clientId     = await getAppSetting('google_client_id',     'GOOGLE_CLIENT_ID')
+  const clientSecret = await getAppSetting('google_client_secret',  'GOOGLE_CLIENT_SECRET')
+  if (!clientId || !clientSecret) throw new Error('Google OAuth credentials not configured')
+  const client = new OAuth2Client(clientId, clientSecret, 'postmessage')
 
   const { tokens } = await client.getToken(code)
   if (!tokens.id_token) throw new Error('No id_token in Google token response')

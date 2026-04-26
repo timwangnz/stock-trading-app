@@ -26,6 +26,7 @@
 
 import { Router } from 'express'
 import { cacheGet, cacheSet, TTL } from './cache.js'
+import { getAppSetting } from './appSettings.js'
 
 const router  = Router()
 const BASE    = 'https://api.polygon.io'
@@ -39,8 +40,8 @@ function validDate(d)   { return DATE_RE.test(d ?? '') }
 
 // ── Polygon fetch helper ─────────────────────────────────────────
 async function polyFetch(path) {
-  const key = process.env.POLYGON_API_KEY
-  if (!key) throw new Error('POLYGON_API_KEY is not set on the server')
+  const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
+  if (!key) throw new Error('Polygon API key not configured — add it in Admin → App Settings')
 
   const sep = path.includes('?') ? '&' : '?'
   const res = await fetch(`${BASE}${path}${sep}apiKey=${key}`)

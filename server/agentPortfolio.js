@@ -14,6 +14,7 @@
 import pool                            from './db.js'
 import { callLLM, extractJsonFromText } from './llm.js'
 import { getToolsFromServer, callMCPTool } from './mcp.js'
+import { getAppSetting } from './appSettings.js'
 
 // ── Candidate stock universe the agent can pick from ─────────────
 // A broad cross-sector watchlist. The LLM selects a subset based on bias.
@@ -38,7 +39,7 @@ export function calcNextRun(frequency, from = new Date()) {
 // ── Polygon helpers (direct — no Express layer needed) ────────────
 
 async function polyFetch(path) {
-  const key = process.env.POLYGON_API_KEY
+  const key = await getAppSetting('polygon_api_key', 'POLYGON_API_KEY')
   if (!key) return null
   try {
     const res = await fetch(`https://api.polygon.io${path}${path.includes('?') ? '&' : '?'}apiKey=${key}`)
@@ -402,7 +403,7 @@ export async function runRebalance(userId, llmConfig = {}) {
       getNewsHeadlines(heldSymbols.length ? heldSymbols : UNIVERSE.slice(0, 5)),
     ])
     const livePriceCount = Object.keys(prices).length
-    console.log(`${tag} Prices fetched: ${livePriceCount}/${allSymbols.length} live  (POLYGON_API_KEY ${process.env.POLYGON_API_KEY ? 'set' : 'NOT SET — will use LLM estimates'})`)
+    console.log(`${tag} Prices fetched: ${livePriceCount}/${allSymbols.length} live  (${livePriceCount > 0 ? 'Polygon configured' : 'Polygon key not set — will use LLM estimates'})`)
     if (livePriceCount === 0) console.warn(`${tag} No live prices — all trades will use LLM estimatedPrice as fallback`)
 
     // Total portfolio value
