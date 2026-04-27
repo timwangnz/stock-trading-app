@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react'
-import { Bot, Sun, Moon, Menu, KeyRound } from 'lucide-react'
+import { Bot, Sun, Moon, KeyRound } from 'lucide-react'
 import { useApp, ACTIONS } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
 import { useTheme } from '../../context/ThemeContext'
@@ -21,7 +21,7 @@ const PAGE_TITLES = {
   stock:     'Stock Detail',
 }
 
-export default function Header({ agentOpen, onToggleAgent, onMenuClick }) {
+export default function Header({ agentOpen, onToggleAgent }) {
   const { state, dispatch } = useApp()
   const { canTrade } = useAuth()
   const { isDark, toggleTheme } = useTheme()
@@ -37,17 +37,8 @@ export default function Header({ agentOpen, onToggleAgent, onMenuClick }) {
 
   return (
     <header className="h-16 px-4 md:px-6 bg-surface-card border-b border-border flex items-center justify-between gap-2">
-      {/* Hamburger (mobile only) + Logo + Page title */}
+      {/* Logo + Page title */}
       <div className="flex items-center gap-2 md:gap-4 min-w-0">
-        {/* Hamburger — hidden on desktop */}
-        <button
-          onClick={onMenuClick}
-          className="md:hidden p-2 -ml-1 rounded-lg text-muted hover:text-primary hover:bg-surface-hover transition-colors"
-          aria-label="Open menu"
-        >
-          <Menu size={20} />
-        </button>
-
         <div className="flex items-center gap-1.5 shrink-0">
           <img
             src="https://t3.ftcdn.net/jpg/01/36/20/40/360_F_136204027_JgHaab2r1wqenjQd6m1PNDJ6J9PM8tvH.jpg"

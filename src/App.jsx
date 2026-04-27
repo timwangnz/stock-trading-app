@@ -56,7 +56,7 @@ export default function App() {
   const { user, loading, isAdmin } = useAuth()
   const { state, dispatch }        = useApp()
   const [agentOpen, setAgentOpen]   = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [resetToken, setResetToken] = useState(RESET_TOKEN)
   const [joinToken, setJoinToken]   = useState(JOIN_TOKEN)
   const [joinMsg,   setJoinMsg]     = useState(null)
@@ -72,10 +72,12 @@ export default function App() {
     })
   }, [user, joinToken])
 
-  // Close sidebar when navigating (mobile UX)
+  // On mobile, close the sidebar overlay when navigating
   useEffect(() => {
-    setSidebarOpen(false)
+    if (window.innerWidth < 768) setSidebarOpen(false)
   }, [state.currentPage])
+
+  const toggleSidebar = () => setSidebarOpen(v => !v)
 
   // While restoring the session from localStorage, show nothing
   if (loading) {
@@ -102,12 +104,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onToggle={toggleSidebar} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header
           agentOpen={agentOpen}
           onToggleAgent={() => setAgentOpen(v => !v)}
-          onMenuClick={() => setSidebarOpen(v => !v)}
         />
         {joinMsg && (
           <div className="mx-4 mt-3 px-4 py-3 rounded-xl bg-gain/10 border border-gain/30 text-gain text-sm flex items-center justify-between">

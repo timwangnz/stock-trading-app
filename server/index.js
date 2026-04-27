@@ -2096,14 +2096,7 @@ app.put('/api/customer-profile', authMiddleware, async (req, res) => {
   }
 })
 
-// ── Catch-all: serve React app for any non-API route (production) ──
-// Must come AFTER all /api/* routes so the API still works.
-if (isProd) {
-  const distDir = join(__dirname, '../dist')
-  app.get('*', (_req, res) => {
-    res.sendFile(join(distDir, 'index.html'))
-  })
-}
+// NOTE: catch-all moved to end of file — after ALL /api/* routes
 
 // ── Daily portfolio snapshot scheduler ──────────────────────────
 //
@@ -2662,6 +2655,20 @@ app.get('/api/admin/campaigns/:id/sends', requireRole('admin'), async (req, res)
     res.status(500).json({ error: err.message })
   }
 })
+
+// ─────────────────────────────────────────────────────────────────
+// ⚠️  ADD ALL NEW API ROUTES ABOVE THIS LINE
+//     The catch-all below will swallow any route registered after it
+//     in production, returning index.html instead of a JSON response.
+// ─────────────────────────────────────────────────────────────────
+
+// ── Catch-all: serve React app for any non-API route (production) ──
+if (isProd) {
+  const distDir = join(__dirname, '../dist')
+  app.get('*', (_req, res) => {
+    res.sendFile(join(distDir, 'index.html'))
+  })
+}
 
 // ── Agent Portfolio Scheduler ────────────────────────────────────
 // Check every 5 minutes for portfolios whose next_run_at has passed
