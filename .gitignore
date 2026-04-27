@@ -33,6 +33,9 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# macOS FUSE / Finder temp files
+.fuse_hidden*
 *.suo
 *.ntvs*
 *.njsproj
