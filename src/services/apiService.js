@@ -12,8 +12,16 @@ const BASE = '/api'
 // Module-level token — set once after Google sign-in, cleared on logout
 let authToken = null
 
+// Optional callback invoked when the server returns 401 (token expired / invalid).
+// AuthContext registers this so it can clear the session and send the user to login.
+let onUnauthorized = null
+
 export function setAuthToken(token) {
   authToken = token
+}
+
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn
 }
 
 async function request(method, path, body) {
@@ -26,6 +34,13 @@ async function request(method, path, body) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   })
+
+  if (res.status === 401) {
+    // Token expired or invalid — clear the session and redirect to login
+    if (onUnauthorized) onUnauthorized()
+    const text = await res.text()
+    throw new Error(`Session expired — please sign in again`)
+  }
 
   if (!res.ok) {
     const text = await res.text()

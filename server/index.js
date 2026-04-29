@@ -46,6 +46,7 @@ import { runPromptTemplate, validateTokens, parseTokens } from './promptRunner.j
 import { runRebalance, getAgentPortfolioState, runScheduledRebalances, calcNextRun } from './agentPortfolio.js'
 import { startPromptScheduler } from './scheduler.js'
 import { log as audit } from './audit.js'
+import { logError } from './errorLog.js'
 import { sendPasswordResetEmail, sendSnapshotFailureEmail } from './email.js'
 import { getAppSetting, setAppSetting, getAllAppSettings } from './appSettings.js'
 import marketRouter                    from './market.js'
@@ -143,12 +144,15 @@ app.use((req, res, next) => {
   next()
 })
 
-// Patch console.error to also capture server-side errors
+// Patch console.error to capture server-side errors in both the
+// in-memory ring buffer AND the persistent error_log DB table.
 const _origConsoleError = console.error.bind(console)
 console.error = (...args) => {
   _origConsoleError(...args)
   const message = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
   addServerLog({ type: 'error', message: message.slice(0, 500) })
+  // Persist to DB — fire-and-forget, logError never throws back
+  logError('system', message)
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
@@ -945,6 +949,7 @@ app.post('/api/agent/trade',
       res.json(result)
     } catch (err) {
       console.error('Agent error:', err.message)
+      logError('agent', err.message, { stack: err.stack?.slice(0, 1000) }, req.user?.id)
       res.status(500).json({ error: err.message })
     }
   }
@@ -969,6 +974,7 @@ app.post('/api/agent/confirm-trade',
       res.json(result)
     } catch (err) {
       console.error('Confirm trade error:', err.message)
+      logError('agent', `Confirm trade: ${err.message}`, { toolName, toolInput }, req.user?.id)
       res.status(500).json({ error: err.message })
     }
   }
@@ -1252,6 +1258,7 @@ app.post('/api/saved-prompts/:id/run',
       res.json({ ...result, prompt_title: prompt.title })
     } catch (err) {
       console.error('[saved-prompts/run]', err.message)
+      logError('scheduler', `Prompt run failed: ${err.message}`, { promptId: req.params.id }, req.user?.id)
       res.status(500).json({ error: err.message })
     }
   }
@@ -1456,6 +1463,77 @@ app.put('/api/admin/app-settings/:key', adminOnly, async (req, res) => {
     const encrypted = ENCRYPTED_SETTINGS.has(key)
     await setAppSetting(key, value || null, encrypted)
     res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/client-error — browser reports a JS / fetch error (any logged-in user)
+app.post('/api/client-error', async (req, res) => {
+  // Intentionally lenient auth: we still want to capture errors even when
+  // the token is slightly stale. Pull user from JWT if present; ignore if not.
+  let userId = null
+  try {
+    const auth = req.headers.authorization
+    if (auth?.startsWith('Bearer ')) {
+      const jwt = await import('jsonwebtoken')
+      const payload = jwt.default.verify(auth.slice(7), process.env.JWT_SECRET || 'dev-secret-change-in-production')
+      userId = payload?.id ?? null
+    }
+  } catch { /* expired token — still log the error, just without userId */ }
+
+  const { message, details } = req.body ?? {}
+  if (!message) return res.status(400).json({ error: 'message required' })
+
+  logError('client', String(message).slice(0, 1000), details ?? null, userId)
+  res.json({ ok: true })
+})
+
+// GET /api/admin/error-log — persistent DB-backed error log
+app.get('/api/admin/error-log', adminOnly, async (req, res) => {
+  const { category, resolved, limit = 200, offset = 0 } = req.query
+  try {
+    const conditions = []
+    const params     = []
+    if (category) { conditions.push(`category = $${params.push(category)}`); }
+    if (resolved !== undefined) { conditions.push(`resolved = $${params.push(resolved === 'true')}`); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const { rows } = await pool.query(
+      `SELECT id, category, message, details, user_id, resolved, created_at
+       FROM error_log
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.push(parseInt(limit))} OFFSET $${params.push(parseInt(offset))}`,
+      params
+    )
+    const { rows: [{ count }] } = await pool.query(
+      `SELECT COUNT(*) FROM error_log ${where}`,
+      params.slice(0, params.length - 2)  // exclude limit/offset params
+    )
+    res.json({ rows, total: parseInt(count) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/admin/error-log/:id/resolve — mark an error as resolved
+app.patch('/api/admin/error-log/:id/resolve', adminOnly, async (req, res) => {
+  const { resolved = true } = req.body
+  try {
+    await pool.query('UPDATE error_log SET resolved = $1 WHERE id = $2', [resolved, req.params.id])
+    audit(req.user.id, 'error_resolved', { errorId: req.params.id, resolved }, req)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/admin/error-log — clear resolved errors
+app.delete('/api/admin/error-log', adminOnly, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM error_log WHERE resolved = TRUE')
+    audit(req.user.id, 'error_log_cleared', { deleted: rowCount }, req)
+    res.json({ ok: true, deleted: rowCount })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -2678,6 +2756,37 @@ setInterval(() => {
 
 // ── Prompt Scheduler ─────────────────────────────────────────────
 startPromptScheduler()
+
+// ── Global Express error handler ────────────────────────────────
+// Catches any error passed to next(err) or thrown inside async route handlers
+// that aren't individually caught. Must be defined after all routes.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const message = err?.message ?? String(err)
+  console.error('[unhandled route error]', message)
+  logError('api', message, {
+    method: req.method,
+    path:   req.path,
+    stack:  err?.stack?.slice(0, 1000),
+  }, req.user?.id ?? null)
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// ── Process-level safety nets ────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message)
+  logError('system', `Uncaught exception: ${err.message}`, { stack: err.stack?.slice(0, 1000) })
+})
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  console.error('[unhandledRejection]', message)
+  logError('system', `Unhandled rejection: ${message}`, {
+    stack: reason instanceof Error ? reason.stack?.slice(0, 1000) : undefined,
+  })
+})
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {

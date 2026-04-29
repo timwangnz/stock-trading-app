@@ -20,6 +20,12 @@ const { Pool, types } = pg
 // Return NUMERIC / DECIMAL columns as JS numbers instead of strings.
 types.setTypeParser(1700, (val) => parseFloat(val))
 
+// Return DATE columns as plain "YYYY-MM-DD" strings instead of Date objects.
+// pg's default DATE parser constructs a Date object, which when used as an
+// object key (e.g. building a date→value map) serialises via .toString() to
+// something like "Mon Apr 28 2026 00:00:00 GMT+0000" — breaking key lookups.
+types.setTypeParser(1082, (val) => val)
+
 const databaseUrl  = process.env.DATABASE_URL?.trim()
 const socketPath   = process.env.DB_SOCKET_PATH
 

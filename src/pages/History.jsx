@@ -108,19 +108,27 @@ export default function History() {
     setError(null)
 
     try {
-      // ── Always fetch SPY for benchmark ──
-      const spyBars = await getAggregates('SPY', FROM, TO)
-      const spyMap  = {}
-      for (const bar of spyBars) spyMap[bar.date] = bar.close
-      const allDates = spyBars.map(b => b.date)
+      // ── Fetch SPY for benchmark (best-effort — chart can work without it) ──
+      let spyBars = []
+      let spyMap  = {}
+      try {
+        spyBars = await getAggregates('SPY', FROM, TO)
+        for (const bar of spyBars) spyMap[bar.date] = bar.close
+      } catch (_) { /* SPY unavailable — show portfolio-only chart */ }
 
       // ── Try DB snapshots first ──────────────────────────────────
       let snapshotMap = {}
       let usingSnapshots = false
       try {
         const snaps = await getPortfolioSnapshots(FROM, TO)
-        if (snaps?.length >= 5) {
-          for (const s of snaps) snapshotMap[s.date] = Number(s.total_value)
+        if (snaps?.length >= 1) {
+          for (const s of snaps) {
+            // Normalise to "YYYY-MM-DD" string — pg may return DATE as a Date object
+            const key = typeof s.date === 'string'
+              ? s.date
+              : new Date(s.date).toISOString().split('T')[0]
+            snapshotMap[key] = Number(s.total_value)
+          }
           usingSnapshots = true
         }
       } catch (_) { /* snapshots unavailable — fall through to estimate */ }
@@ -136,9 +144,32 @@ export default function History() {
         })
       }
 
+      // ── Determine date axis ─────────────────────────────────────
+      // Prefer SPY trading days (gives a clean market-day x-axis).
+      // If SPY data is unavailable, fall back to snapshot dates or
+      // the union of holding price dates so the chart still renders.
+      let allDates
+      if (spyBars.length > 0) {
+        allDates = spyBars.map(b => b.date)
+      } else if (usingSnapshots) {
+        allDates = Object.keys(snapshotMap).sort()
+      } else {
+        const dateSet = new Set()
+        for (const bars of Object.values(priceMap)) {
+          for (const date of Object.keys(bars)) dateSet.add(date)
+        }
+        allDates = [...dateSet].sort()
+      }
+
+      if (allDates.length === 0) {
+        setError('No market data available — check that your Polygon API key is configured.')
+        return
+      }
+
       // ── Build row array ────────────────────────────────────────
       const lastKnown = {}
       const rows = []
+      const holdingSymbols = [...new Set(portfolio.map(h => h.symbol))]
 
       for (const date of allDates) {
         let portfolioValue
@@ -154,8 +185,7 @@ export default function History() {
           }
         } else {
           // On-the-fly: price × current shares
-          const symbols = [...new Set(portfolio.map(h => h.symbol))]
-          for (const sym of symbols) {
+          for (const sym of holdingSymbols) {
             if (priceMap[sym]?.[date] != null) lastKnown[sym] = priceMap[sym][date]
           }
           portfolioValue = portfolio.reduce((sum, h) => {
@@ -170,11 +200,16 @@ export default function History() {
       // Without this, the chart shows a flat $0 line for every day before
       // the user's first recorded portfolio value, which looks wrong.
       const firstRealIdx = rows.findIndex(r => r.portfolioValue > 0)
-      const trimmedRows  = firstRealIdx >= 0 ? rows.slice(firstRealIdx) : rows
+      const trimmedRows  = firstRealIdx >= 0 ? rows.slice(firstRealIdx) : []
+
+      if (trimmedRows.length === 0) {
+        setError('No portfolio value data found. Try clicking "Snapshot Now" to record today\'s value, or check that your holdings have historical price data.')
+        return
+      }
 
       // ── Normalise SPY to portfolio's starting value ────────────
-      const startValue = trimmedRows[0]?.portfolioValue ?? 1
-      const spyStart   = trimmedRows.find(r => r.spyClose != null)?.spyClose ?? 1
+      const startValue = trimmedRows[0]?.portfolioValue || 1
+      const spyStart   = trimmedRows.find(r => r.spyClose != null)?.spyClose || 1
 
       const enriched = trimmedRows.map((r, i) => {
         const prev         = i > 0 ? trimmedRows[i - 1].portfolioValue : r.portfolioValue
@@ -394,7 +429,7 @@ export default function History() {
       {error && (
         <div className="flex items-center gap-3 bg-loss/10 border border-loss/20 text-loss/80 rounded-xl px-4 py-3 text-sm">
           <AlertCircle size={16} className="shrink-0" />
-          <span>{error} — check that your Polygon API key is set on the server.</span>
+          <span>{error}</span>
         </div>
       )}
 

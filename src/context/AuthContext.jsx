@@ -13,7 +13,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthToken, joinClass } from '../services/apiService'
+import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthToken, setUnauthorizedHandler, joinClass } from '../services/apiService'
 
 const AuthContext = createContext(null)
 
@@ -66,6 +66,15 @@ export function AuthProvider({ children }) {
       }
     }
     setLoading(false)
+
+    // Register a handler so any 401 response automatically clears the session.
+    // This covers the case where the JWT (24 h TTL) expires while the app is open.
+    setUnauthorizedHandler(() => {
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem(USER_KEY)
+      setAuthToken(null)
+      setUser(null)
+    })
   }, [])
 
   /**

@@ -585,6 +585,27 @@ async function setup() {
   `)
   console.log('✅ Table "app_settings" ready')
 
+  // ── error_log ─────────────────────────────────────────────────
+  // Persistent record of server-side and client-side failures.
+  // Unlike the in-memory SERVER_LOGS buffer, this survives restarts.
+  // category: 'agent' | 'snapshot' | 'scheduler' | 'llm' | 'polygon' |
+  //           'auth' | 'db' | 'api' | 'client' | 'system'
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS error_log (
+      id          BIGSERIAL    PRIMARY KEY,
+      category    VARCHAR(50)  NOT NULL,
+      message     TEXT         NOT NULL,
+      details     JSONB        NULL,
+      user_id     VARCHAR(50)  NULL,
+      resolved    BOOLEAN      NOT NULL DEFAULT FALSE,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_error_log_category ON error_log (category)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_error_log_created  ON error_log (created_at DESC)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS idx_error_log_resolved ON error_log (resolved)`)
+  console.log('✅ Table "error_log" ready')
+
   await client.end()
   console.log('\n🎉 Database setup complete!')
   console.log('   No seed data — each user gets a fresh portfolio after signing in.')

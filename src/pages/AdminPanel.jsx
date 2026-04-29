@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Shield, ChevronDown, ChevronUp, RefreshCw,
   UserX, UserCheck, Check, X, Users, Lock, ClipboardList,
-  GraduationCap, Globe, Loader2, Terminal,
+  GraduationCap, Globe, Loader2, Terminal, AlertTriangle, CheckCircle, Trash2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import clsx from 'clsx'
@@ -1145,6 +1145,218 @@ function ServerLogsTab() {
   )
 }
 
+// ── Error Log Tab ────────────────────────────────────────────────
+const ERROR_CATEGORIES = ['', 'agent', 'snapshot', 'scheduler', 'llm', 'polygon', 'auth', 'db', 'api', 'client', 'system']
+
+function categoryBadge(cat) {
+  const map = {
+    agent:     'text-accent-purple bg-accent-purple/10 border-accent-purple/20',
+    snapshot:  'text-accent-blue   bg-accent-blue/10   border-accent-blue/20',
+    scheduler: 'text-accent-blue   bg-accent-blue/10   border-accent-blue/20',
+    llm:       'text-yellow-400    bg-yellow-400/10    border-yellow-400/20',
+    polygon:   'text-orange-400    bg-orange-400/10    border-orange-400/20',
+    auth:      'text-loss          bg-loss/10          border-loss/20',
+    db:        'text-loss          bg-loss/10          border-loss/20',
+    api:       'text-loss          bg-loss/10          border-loss/20',
+    client:    'text-orange-400    bg-orange-400/10    border-orange-400/20',
+    system:    'text-muted         bg-surface-hover    border-border',
+  }
+  return map[cat] ?? 'text-muted bg-surface-hover border-border'
+}
+
+function ErrorLogTab() {
+  const [rows,         setRows]         = useState([])
+  const [total,        setTotal]        = useState(0)
+  const [loading,      setLoading]      = useState(true)
+  const [catFilter,    setCatFilter]    = useState('')
+  const [showResolved, setShowResolved] = useState(false)
+  const [expanded,     setExpanded]     = useState(null)   // id of expanded row
+  const [clearing,     setClearing]     = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: 200 })
+      if (catFilter)             params.set('category', catFilter)
+      if (!showResolved)         params.set('resolved', 'false')
+      const data = await adminFetch(`/admin/error-log?${params}`)
+      setRows(data.rows)
+      setTotal(data.total)
+    } catch (err) {
+      console.error('Error log fetch failed:', err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [catFilter, showResolved])
+
+  useEffect(() => { load() }, [load])
+
+  const resolve = async (id, resolved) => {
+    await adminFetch(`/admin/error-log/${id}/resolve`, {
+      method: 'PATCH',
+      body: JSON.stringify({ resolved }),
+    })
+    setRows(prev => prev.map(r => r.id === id ? { ...r, resolved } : r))
+  }
+
+  const clearResolved = async () => {
+    setClearing(true)
+    try {
+      await adminFetch('/admin/error-log', { method: 'DELETE' })
+      load()
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const unresolvedCount = rows.filter(r => !r.resolved).length
+
+  return (
+    <div className="space-y-4">
+
+      {/* Summary + controls */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className={clsx(
+          'flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border font-medium',
+          unresolvedCount > 0
+            ? 'text-loss bg-loss/10 border-loss/20'
+            : 'text-gain bg-gain/10 border-gain/20'
+        )}>
+          <AlertTriangle size={11} />
+          {unresolvedCount} unresolved
+        </div>
+        <span className="text-faint text-xs">{total} total matching</span>
+
+        {/* Category filter */}
+        <select
+          value={catFilter}
+          onChange={e => setCatFilter(e.target.value)}
+          className="ml-auto text-xs px-2 py-1.5 rounded-lg border border-border bg-surface text-primary"
+        >
+          {ERROR_CATEGORIES.map(c => (
+            <option key={c} value={c}>{c || 'All categories'}</option>
+          ))}
+        </select>
+
+        {/* Show resolved toggle */}
+        <button
+          onClick={() => setShowResolved(v => !v)}
+          className={clsx(
+            'text-xs px-3 py-1.5 rounded-lg border transition-colors',
+            showResolved
+              ? 'border-accent-blue/40 text-accent-blue bg-accent-blue/10'
+              : 'border-border text-muted hover:text-primary'
+          )}
+        >
+          {showResolved ? 'Hide resolved' : 'Show resolved'}
+        </button>
+
+        {/* Clear resolved */}
+        <button
+          onClick={clearResolved}
+          disabled={clearing}
+          className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-border text-muted hover:text-loss hover:border-loss/30 transition-colors disabled:opacity-40"
+        >
+          <Trash2 size={11} />
+          {clearing ? 'Clearing…' : 'Clear resolved'}
+        </button>
+
+        {/* Refresh */}
+        <button onClick={load} disabled={loading} className="p-1.5 rounded-lg border border-border text-muted hover:text-primary transition-colors disabled:opacity-40">
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {loading && (
+        <div className="h-40 flex items-center justify-center gap-2 text-muted text-sm">
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      )}
+
+      {!loading && rows.length === 0 && (
+        <div className="h-40 flex flex-col items-center justify-center gap-2 text-muted text-sm bg-surface-card border border-border rounded-xl">
+          <CheckCircle size={24} className="text-gain" />
+          No errors found
+        </div>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <div className="bg-surface-card border border-border rounded-xl overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-faint border-b border-border">
+                <th className="text-left px-4 py-2.5 font-medium">Time</th>
+                <th className="text-left px-3 py-2.5 font-medium">Category</th>
+                <th className="text-left px-3 py-2.5 font-medium">Message</th>
+                <th className="text-left px-3 py-2.5 font-medium hidden md:table-cell">User</th>
+                <th className="text-right px-4 py-2.5 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map(row => (
+                <>
+                  <tr
+                    key={row.id}
+                    className={clsx(
+                      'hover:bg-surface-hover/40 cursor-pointer transition-colors',
+                      row.resolved && 'opacity-50'
+                    )}
+                    onClick={() => setExpanded(expanded === row.id ? null : row.id)}
+                  >
+                    <td className="px-4 py-2.5 text-faint whitespace-nowrap">
+                      {new Date(row.created_at).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className={clsx('px-1.5 py-0.5 rounded border text-[10px] font-medium', categoryBadge(row.category))}>
+                        {row.category}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-primary max-w-xs truncate">
+                      {row.message}
+                    </td>
+                    <td className="px-3 py-2.5 text-faint hidden md:table-cell font-mono">
+                      {row.user_id ? row.user_id.slice(0, 12) + '…' : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={e => { e.stopPropagation(); resolve(row.id, !row.resolved) }}
+                        className={clsx(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium transition-colors',
+                          row.resolved
+                            ? 'text-muted border-border hover:text-primary'
+                            : 'text-gain border-gain/30 bg-gain/10 hover:bg-gain/20'
+                        )}
+                      >
+                        <CheckCircle size={10} />
+                        {row.resolved ? 'Unresolve' : 'Resolve'}
+                      </button>
+                    </td>
+                  </tr>
+                  {expanded === row.id && row.details && (
+                    <tr key={`${row.id}-detail`} className="bg-surface-hover/30">
+                      <td colSpan={5} className="px-6 py-3">
+                        <pre className="text-faint text-[10px] whitespace-pre-wrap break-all font-mono max-h-40 overflow-y-auto">
+                          {JSON.stringify(row.details, null, 2)}
+                        </pre>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2 border-t border-border text-faint text-xs flex justify-between">
+            <span>Showing {rows.length} of {total} · persisted in DB</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main AdminPanel ──────────────────────────────────────────────
 
 const TABS = [
@@ -1152,6 +1364,7 @@ const TABS = [
   { key: 'classes',     label: 'Classes',     Icon: GraduationCap },
   { key: 'permissions', label: 'Permissions', Icon: Lock          },
   { key: 'audit',       label: 'Audit Log',   Icon: ClipboardList },
+  { key: 'errorlog',    label: 'Error Log',   Icon: AlertTriangle },
   { key: 'serverlogs',  label: 'Server Logs', Icon: Terminal      },
 ]
 
@@ -1279,6 +1492,7 @@ export default function AdminPanel() {
       {activeTab === 'classes'     && <ClassesTab />}
       {activeTab === 'permissions' && <PermissionsTab />}
       {activeTab === 'audit'       && <AuditTab users={users} />}
+      {activeTab === 'errorlog'    && <ErrorLogTab />}
       {activeTab === 'serverlogs'  && <ServerLogsTab />}
     </div>
   )
