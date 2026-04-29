@@ -8,13 +8,12 @@
  */
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { THEMES } from '../theme'
 
 const ThemeContext = createContext(null)
 
 const STORAGE_KEY = 'tradebuddy_theme'
 
-export function ThemeProvider({ children }) {
+export function ThemeProvider({ children, themes = {} }) {
   const [theme, setTheme] = useState(() => {
     // Restore saved preference, or default to light
     return localStorage.getItem(STORAGE_KEY) ?? 'light'
@@ -33,8 +32,8 @@ export function ThemeProvider({ children }) {
     isDark: theme === 'dark',
     toggleTheme,
     // Chart values for recharts inline props (can't use CSS vars there)
-    chart:     THEMES[theme].chart,
-    pieColors: THEMES[theme].pieColors,
+    chart:     themes[theme]?.chart,
+    pieColors: themes[theme]?.pieColors,
   }
 
   return (

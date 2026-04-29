@@ -19,7 +19,7 @@
  */
 
 import { createContext, useContext, useReducer, useEffect, useCallback } from 'react'
-import { useAuth } from './AuthContext'
+import { useAuth } from '../../common/context/AuthContext'
 import {
   fetchPortfolio, upsertHolding, removeHolding,
   fetchWatchlist, addWatchlistSymbol, removeWatchlistSymbol,

@@ -1,5 +1,5 @@
 /** @type {import('tailwindcss').Config} */
-import { colors } from './src/theme.js'
+import { colors } from './src/tradebuddy/theme.js'
 
 export default {
   content: [

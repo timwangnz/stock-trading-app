@@ -64,7 +64,7 @@ export default function App() {
   // Auto-join class when user is logged in and a join token is in the URL
   useEffect(() => {
     if (!user || !joinToken) return
-    import('./services/apiService').then(({ joinClass }) => {
+    import('./common/services/apiService').then(({ joinClass }) => {
       joinClass(joinToken)
         .then(res => setJoinMsg(`🎉 You joined ${res.class_name}! Check the Leaderboard and Ideas tabs.`))
         .catch(err => setJoinMsg(`Could not join class: ${err.message}`))

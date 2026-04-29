@@ -4,6 +4,7 @@ import { AuthProvider } from './common/context/AuthContext'
 import { AppProvider } from './tradebuddy/context/AppContext'
 import { ThemeProvider } from './common/context/ThemeContext'
 import { KeysProvider } from './common/context/KeysContext'
+import { THEMES } from './tradebuddy/theme.js'
 import './index.css'
 import App from './App.jsx'
 
@@ -81,7 +82,7 @@ createRoot(document.getElementById('root')).render(
       <AuthProvider>
         <AppProvider>
           <KeysProvider>
-            <ThemeProvider>
+            <ThemeProvider themes={THEMES}>
               <App />
             </ThemeProvider>
           </KeysProvider>

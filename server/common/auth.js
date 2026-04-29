@@ -12,7 +12,7 @@ import { OAuth2Client } from 'google-auth-library'
 import dotenv           from 'dotenv'
 import { getAppSetting } from '../common/appSettings.js'
 
-dotenv.config({ path: new URL('../.env', import.meta.url).pathname })
+dotenv.config({ path: new URL('../../.env', import.meta.url).pathname })
 
 // Read JWT_SECRET once at startup — it never changes at runtime
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production'
