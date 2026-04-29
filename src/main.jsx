@@ -1,9 +1,9 @@
 import { StrictMode, Component } from 'react'
 import { createRoot } from 'react-dom/client'
-import { AuthProvider } from './context/AuthContext'
-import { AppProvider } from './context/AppContext'
-import { ThemeProvider } from './context/ThemeContext'
-import { KeysProvider } from './context/KeysContext'
+import { AuthProvider } from './common/context/AuthContext'
+import { AppProvider } from './tradebuddy/context/AppContext'
+import { ThemeProvider } from './common/context/ThemeContext'
+import { KeysProvider } from './common/context/KeysContext'
 import './index.css'
 import App from './App.jsx'
 
