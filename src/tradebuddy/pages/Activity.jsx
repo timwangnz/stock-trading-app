@@ -75,7 +75,7 @@ function fullTime(dateStr) {
 }
 
 async function apiFetch(path) {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   const res = await fetch(`/api${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   })

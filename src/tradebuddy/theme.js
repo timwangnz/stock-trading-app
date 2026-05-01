@@ -1,5 +1,5 @@
 /**
- * theme.js — Single source of truth for TradeBuddy's color tokens.
+ * theme.js — Single source of truth for Vantage's color tokens.
  *
  * HOW IT WORKS
  * ────────────

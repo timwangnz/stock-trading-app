@@ -109,7 +109,7 @@ async function ensureSession(server) {
       params: {
         protocolVersion: MCP_VERSION,
         capabilities:    {},
-        clientInfo:      { name: 'TradeBuddy', version: '1.0.0' },
+        clientInfo:      { name: 'Vantage', version: '1.0.0' },
       },
     }),
     signal: AbortSignal.timeout(20_000),

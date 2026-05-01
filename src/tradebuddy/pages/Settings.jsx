@@ -245,7 +245,7 @@ function LLMCard() {
 // ── MCP Servers card ──────────────────────────────────────────────
 
 const MCP_API = (path, opts = {}) => {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   return fetch(`/api/mcp-servers${path}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers ?? {}) },
@@ -451,7 +451,7 @@ const APP_SETTING_DEFS = [
       { key: 'resend_api_key', label: 'Resend API Key', secret: true,
         hint: 'Used for password resets, class invites, and prompt emails.', link: 'https://resend.com/api-keys' },
       { key: 'email_from',     label: 'From Address',   secret: false,
-        hint: 'e.g. TradeBuddy <noreply@yourdomain.com>  (defaults to Resend sandbox)' },
+        hint: 'e.g. Vantage <noreply@yourdomain.com>  (defaults to Resend sandbox)' },
     ],
   },
   {
@@ -475,7 +475,7 @@ function AppSettingField({ def, currentValue, onSave }) {
   const handleSave = async () => {
     setSaving(true); setErr(null)
     try {
-      const token = localStorage.getItem('tradebuddy_token')
+      const token = localStorage.getItem('vantage_token')
       const res = await fetch(`/api/admin/app-settings/${def.key}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -542,7 +542,7 @@ function AppSettingsCard() {
 
   const load = async () => {
     try {
-      const token = localStorage.getItem('tradebuddy_token')
+      const token = localStorage.getItem('vantage_token')
       const res = await fetch('/api/admin/app-settings', {
         headers: { Authorization: `Bearer ${token}` },
       })

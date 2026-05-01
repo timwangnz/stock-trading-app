@@ -162,8 +162,8 @@ Current data fetching is also tied to the regex path. Redesign:
 
 ## Portable agent architecture
 
-The agent should be a reusable framework, not a TradeBuddy-specific application.
-TradeBuddy and the future CRM are both *configurations* of the same core — they
+The agent should be a reusable framework, not a Vantage-specific application.
+Vantage and the future CRM are both *configurations* of the same core — they
 plug in different system prompts, context builders, and tool sets, but share the
 same loop, classifier, and chat UI.
 
@@ -174,7 +174,7 @@ AgentCore  (backend — domain-agnostic)
   ├── agentLoop.js        ← classifier + tool-use loop, max iterations, streaming
   ├── classifyIntent.js   ← LLM classifier, returns structured JSON
   └── tools/
-        ├── trading/      ← Polygon, portfolio, market news  (TradeBuddy)
+        ├── trading/      ← Polygon, portfolio, market news  (Vantage)
         └── crm/          ← contacts, deals, calendar, email  (CRM)
 
 AgentChat  (frontend — domain-agnostic)
@@ -196,10 +196,10 @@ AgentChat  (frontend — domain-agnostic)
 
 ### The interface
 
-`agentLoop` takes a configuration object — TradeBuddy and CRM each provide their own:
+`agentLoop` takes a configuration object — Vantage and CRM each provide their own:
 
 ```js
-// TradeBuddy
+// Vantage
 const result = await agentLoop({
   message,
   systemPrompt: TRADING_SYSTEM_PROMPT,
@@ -230,11 +230,11 @@ build context, call tools, iterate, return response.
 The chat UI is a drop-in component:
 
 ```jsx
-// TradeBuddy
+// Vantage
 <AgentChat
   apiEndpoint="/api/agent"
   getToken={() => localStorage.getItem('tradebuddy_token')}
-  agentName="TradeBuddy"
+  agentName="Vantage"
   placeholder="Ask about your portfolio..."
 />
 
@@ -252,9 +252,9 @@ toolbar. It knows nothing about trading or CRM — only how to talk to `/api/age
 
 ### Why design it this way now
 
-The CRM branches from TradeBuddy. If the agent is already a framework at branch time,
+The CRM branches from Vantage. If the agent is already a framework at branch time,
 the CRM gets a working agent loop for free — just swap the config. If it's still
-TradeBuddy-specific, the branch requires a messy refactor before CRM work can start.
+Vantage-specific, the branch requires a messy refactor before CRM work can start.
 
 The redesign (Phases 1–4) is the right moment to get this shape right. The marginal
 cost of a clean interface is low now; retrofitting later is expensive.
@@ -437,3 +437,158 @@ Trade outcomes (last 90 days)
 - This pattern applies directly to the CRM agent — build it reusably from day one
 - Related roadmap item: *Agent Architecture — Hybrid Agentic Loop* in ROADMAP.md
 - For what gets injected into the context window at each step, see `context-architecture.md`
+
+---
+
+## Self-Improving Formula Pipeline
+
+*April 2026*
+
+### The problem with LLM arithmetic
+
+Asking the LLM to compute financial metrics (today's gain, unrealized P&L, cost basis) produces unreliable results — subtle floating-point errors, wrong formula choice, "I cannot calculate" refusals. Financial calculations belong in JS, not in the model.
+
+But the mapping from a user's natural language question to the right formula is exactly what an LLM is good at. The architecture that falls out of this observation separates the two concerns cleanly.
+
+---
+
+### Architecture: four layers
+
+```
+User question
+    → Classifier (LLM)        natural language → metric intent
+    → Formula registry (DB)   metric intent → approved JS expression
+    → Sandbox executor (JS)   executes the expression safely
+    → Presenter (LLM)         formats and explains the result
+```
+
+Each layer has a single, well-defined responsibility. The LLM touches natural language at the edges; JS handles all arithmetic in the middle.
+
+---
+
+### The formula registry
+
+Formulas are stored in the database as approved JS expressions — not hardcoded in `agent.js`:
+
+```sql
+CREATE TABLE agent_formulas (
+  id           SERIAL PRIMARY KEY,
+  name         TEXT UNIQUE NOT NULL,        -- "todayGain", "costBasis"
+  expression   TEXT NOT NULL,               -- sandboxed JS expression
+  description  TEXT,                        -- human-readable explanation
+  test_cases   JSONB,                       -- [{ input, expected }]
+  status       TEXT DEFAULT 'generated',    -- generated | approved | rejected
+  proposed_by  TEXT,                        -- "llm:claude-haiku"
+  approved_by  TEXT,                        -- "dr.tim@..."
+  failure_case TEXT,                        -- original user message that triggered this
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  approved_at  TIMESTAMPTZ
+)
+```
+
+The executor is a tool the agent calls — consistent with `execute_buy`, `get_stock_snapshot`, etc.:
+
+```js
+{
+  name: 'compute_metric',
+  description: 'Compute a financial metric from the portfolio using a pre-approved formula.',
+  input_schema: {
+    properties: {
+      formula_name: { type: 'string' }  // e.g. "todayGain", "costBasis"
+    }
+  }
+}
+```
+
+The sandbox only permits pure arithmetic expressions — no `fetch`, no `require`, no side effects. This is the trust boundary: the LLM can only use computations a human has already verified.
+
+---
+
+### The improvement loop
+
+```
+Error (human)
+    │  user hits a bad or missing metric response
+    ▼
+Developer (LLM)
+    │  diagnoses root cause from failure log + codebase
+    │  writes JS expression + test cases
+    │  saves to agent_formulas with status: "generated"
+    ▼
+Approver (human)
+    │  reviews expression + test case results in admin UI
+    │  sees the original failure case that triggered it
+    │  approves → status: "approved" — live instantly, no deployment
+    ▼
+Executor (LLM)
+       classifier identifies metric intent
+       → looks up approved formula from DB
+       → sandbox executes it
+       → LLM presents result
+```
+
+No deployment is required between approval and execution because formulas live in the database. The human's approval is the gate, not a code merge.
+
+---
+
+### Organic registry growth: the hybrid approach
+
+The registry is not designed upfront — it grows from real usage:
+
+**First encounter** (formula doesn't exist yet):
+1. LLM generates a JS snippet on the fly to answer the question
+2. Sandbox executes it, result shown to user
+3. Human sees the result, confirms it's correct → formula saved to registry as `status: "approved"`
+
+**Repeat encounter** (formula already approved):
+1. Classifier matches question → formula name found in registry
+2. Sandbox executes the approved expression directly
+3. LLM presents result — no code generation, no approval needed
+
+This means every formula in the registry is traceable to a real user question that produced it. The registry becomes institutional memory — a library of verified financial calculations built for free through normal usage.
+
+---
+
+### Division of labour
+
+```
+Role              Responsibility                        Can introduce arithmetic bugs?
+────────────────  ────────────────────────────────────  ──────────────────────────────
+Error (human)     Surfaces failure via UI               No
+Developer (LLM)   Diagnoses, writes expression + tests  Yes — caught at approval
+Approver (human)  Reviews expression, approves/rejects  Gate — prevents bad formulas shipping
+Executor (LLM)    Calls compute_metric tool             No — only runs approved expressions
+JS sandbox        Executes the expression               No — pure arithmetic only
+```
+
+The approver UI shows: the formula expression, test case pass/fail, and the original user message that triggered the request. Approval is fast — the LLM has already done the diagnosis and written the tests.
+
+---
+
+### Formula examples
+
+```
+name: "todayGain"
+expression: "portfolio.reduce((sum, h) =>
+  sum + h.shares * ((priceMap[h.symbol]?.price ?? 0) - (priceMap[h.symbol]?.prevClose ?? 0)), 0)"
+
+name: "unrealizedPL"
+expression: "portfolio.reduce((sum, h) =>
+  sum + h.shares * ((priceMap[h.symbol]?.price ?? 0) - h.avgCost), 0)"
+
+name: "costBasis"
+expression: "portfolio.reduce((sum, h) => sum + h.shares * h.avgCost, 0)"
+
+name: "totalValue"
+expression: "portfolio.reduce((sum, h) =>
+  sum + h.shares * (priceMap[h.symbol]?.price ?? 0), 0)"
+```
+
+---
+
+### Connection to platform vision
+
+This pattern is domain-agnostic. The same pipeline — metric intent classification, DB-stored formulas, sandbox execution, human approval — transfers directly to Meridian (revenue calculations, attribution metrics) and CRM (pipeline value, conversion rates). A formula approved in one product does not automatically apply to another, but the infrastructure is shared.
+
+The self-improving loop is the concrete answer to how the agent layer compounds over time: each failure becomes a tested, approved formula that can never produce that failure again.
+

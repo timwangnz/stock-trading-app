@@ -282,10 +282,10 @@ function Login({ clientId = '' }) {
       <div className="flex flex-col items-center gap-3">
         <img
           src="https://t3.ftcdn.net/jpg/01/36/20/40/360_F_136204027_JgHaab2r1wqenjQd6m1PNDJ6J9PM8tvH.jpg"
-          alt="TradeBuddy"
+          alt="Vantage"
           className="h-16 w-16 rounded-2xl object-cover shadow-xl"
         />
-        <h1 className="text-primary font-bold text-3xl tracking-tight">TradeBuddy</h1>
+        <h1 className="text-primary font-bold text-3xl tracking-tight">Vantage</h1>
         <p className="text-muted text-sm">Vibe Trading Platform</p>
       </div>
 

@@ -45,7 +45,7 @@ if (databaseUrl) {
   poolConfig = {
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME || 'tradebuddy',
+    database: process.env.DB_NAME || 'vantage',
     max:      10,
     ...(socketPath
       ? { host: socketPath }                                    // Cloud SQL socket

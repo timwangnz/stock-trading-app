@@ -327,7 +327,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
     setLoading(true)
 
     try {
-      const token = localStorage.getItem('tradebuddy_token')
+      const token = localStorage.getItem('vantage_token')
       const res   = await fetch('/api/agent/trade', {
         method:  'POST',
         headers: {
@@ -387,7 +387,7 @@ export default function TradingAgent({ portfolio, onTradeExecuted, embedded = fa
   const confirmTrade = async (msgId, pendingTrade) => {
     setConfirming(msgId)
     try {
-      const token = localStorage.getItem('tradebuddy_token')
+      const token = localStorage.getItem('vantage_token')
       const res   = await fetch('/api/agent/confirm-trade', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

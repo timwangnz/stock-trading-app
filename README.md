@@ -1,4 +1,4 @@
-# TradeBuddy — Vibe Trading App
+# Vantage — Vibe Trading App
 
 A full-stack vibe trading application for learning markets without real money. Users manage a simulated portfolio, track a watchlist, view live price charts, interact with an AI trading agent, and build expert prompt templates with live data injection — all powered by their own LLM API key.
 
@@ -51,7 +51,7 @@ The Express server serves both the React frontend (as compiled static files) and
 
 ### Prerequisites
 
-Install these on the machine that will run TradeBuddy (or the server it runs on):
+Install these on the machine that will run Vantage (or the server it runs on):
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -68,7 +68,7 @@ You will also need accounts and API keys from:
 | [Resend](https://resend.com) | Password reset emails | Free tier (100/day) | resend.com |
 | Google Cloud | Google Sign-In (optional) | Free | console.cloud.google.com |
 
-> **Note:** Each user brings their own LLM API key. TradeBuddy does not use a shared API key for the trading agent — users enter theirs in the app settings.
+> **Note:** Each user brings their own LLM API key. Vantage does not use a shared API key for the trading agent — users enter theirs in the app settings.
 
 ---
 
@@ -132,7 +132,7 @@ POLYGON_API_KEY=<your polygon key>
 
 # ── Email (password reset) ──────────────────────────────────────
 RESEND_API_KEY=<your resend key>
-EMAIL_FROM=TradeBuddy <noreply@yourdomain.com>
+EMAIL_FROM=Vantage <noreply@yourdomain.com>
 
 # ── Google Sign-In (optional) ───────────────────────────────────
 GOOGLE_CLIENT_ID=<your google client id>
@@ -164,7 +164,7 @@ npm run db:setup
 You should see output like:
 
 ```
-🔧 Setting up TradeBuddy database (PostgreSQL)…
+🔧 Setting up Vantage database (PostgreSQL)…
 ✅ users
 ✅ portfolio
 ✅ watchlist
@@ -223,13 +223,13 @@ From that point you can manage other users (promote, demote, disable) from the *
 
 ## Running as a Background Service (Linux / Office Server)
 
-To keep TradeBuddy running after you close the terminal, create a systemd service.
+To keep Vantage running after you close the terminal, create a systemd service.
 
 Create `/etc/systemd/system/tradebuddy.service`:
 
 ```ini
 [Unit]
-Description=TradeBuddy Vibe Trading App
+Description=Vantage Vibe Trading App
 After=network.target postgresql.service
 
 [Service]
@@ -421,7 +421,7 @@ The **Agent Context** tab manages per-user context entries that are automaticall
 | `SNAPSHOT_SECRET` | Yes | Secret for the internal snapshot endpoint |
 | `POLYGON_API_KEY` | Yes | Polygon.io key for market data |
 | `RESEND_API_KEY` | Yes | Resend key for password reset emails |
-| `EMAIL_FROM` | Yes | Sender address, e.g. `TradeBuddy <noreply@yourdomain.com>` |
+| `EMAIL_FROM` | Yes | Sender address, e.g. `Vantage <noreply@yourdomain.com>` |
 | `GOOGLE_CLIENT_ID` | Optional | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth client secret |
 | `VITE_GOOGLE_CLIENT_ID` | Optional | Same as above — baked into the frontend at build time |
@@ -431,7 +431,7 @@ The **Agent Context** tab manages per-user context entries that are automaticall
 
 ## Upgrading
 
-When you pull a new version of TradeBuddy:
+When you pull a new version of Vantage:
 
 ```bash
 git pull
@@ -465,7 +465,7 @@ psql -h $DB_HOST -U $DB_USER -d $DB_NAME
 ```
 
 **"No API key configured" in the Trading Agent**
-Each user must add their own API key in the agent settings panel (⚙️). TradeBuddy does not provide a shared key.
+Each user must add their own API key in the agent settings panel (⚙️). Vantage does not provide a shared key.
 
 **Market data not loading**
 Verify `POLYGON_API_KEY` is set correctly. The free Polygon tier has a 15-minute data delay and rate limits — this is expected.

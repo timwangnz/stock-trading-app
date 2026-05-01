@@ -2,11 +2,11 @@
 
 ## Vision
 Build an AI-first platform for small businesses, starting with a CRM.
-TradeBuddy is the learning vehicle and architectural foundation.
+Vantage is the learning vehicle and architectural foundation.
 
 ---
 
-## Phase 1 — TradeBuddy v1 (Current)
+## Phase 1 — Vantage v1 (Current)
 
 ### Feature Completion
 - [ ] Full role-based testing (admin, teacher, student, trader, readonly)
@@ -48,12 +48,12 @@ TradeBuddy is the learning vehicle and architectural foundation.
 ## Phase 2 — CRM (Next Project)
 
 ### Strategy
-- Branch from TradeBuddy — keep the architectural foundation
+- Branch from Vantage — keep the architectural foundation
 - Strip trading-specific features, replace with CRM-specific ones
 - Target: small businesses, AI-first from day one (not bolted on)
 
-### What Transfers from TradeBuddy
-| TradeBuddy | CRM Equivalent |
+### What Transfers from Vantage
+| Vantage | CRM Equivalent |
 |---|---|
 | Auth system (email + Google, JWT, roles) | Same |
 | Multi-role architecture | Owner, sales rep, support staff |

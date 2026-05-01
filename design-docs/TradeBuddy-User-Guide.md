@@ -1,6 +1,6 @@
-# TradeBuddy User Guide
+# Vantage User Guide
 
-TradeBuddy is a simulated stock trading platform for students and teachers. All portfolios use virtual money — no real funds are ever at risk.
+Vantage is a simulated stock trading platform for students and teachers. All portfolios use virtual money — no real funds are ever at risk.
 
 ---
 
@@ -8,7 +8,7 @@ TradeBuddy is a simulated stock trading platform for students and teachers. All 
 
 ### 1. Sign In
 
-- Open TradeBuddy in your browser.
+- Open Vantage in your browser.
 - Click **Sign in with Google** to use your Google account, or enter your email and password if you registered manually.
 - If you forgot your password, click **Forgot password?** and follow the link sent to your email.
 

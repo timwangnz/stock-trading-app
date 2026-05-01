@@ -10,7 +10,7 @@
 // In dev, Vite proxies /api → http://localhost:3001 (see vite.config.js).
 // In production, /api is served by the same Express process — same origin.
 const BASE      = '/api/market'
-const TOKEN_KEY = 'tradebuddy_token'
+const TOKEN_KEY = 'vantage_token'
 
 async function apiFetch(path) {
   const token = localStorage.getItem(TOKEN_KEY)

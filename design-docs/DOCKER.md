@@ -1,8 +1,8 @@
-# TradeBuddy — Docker Guide
+# Vantage — Docker Guide
 
 ## Background
 
-TradeBuddy ships as a single Docker image (`anpwang/tradebuddy`) that contains both the React frontend and the Express API server.
+Vantage ships as a single Docker image (`anpwang/tradebuddy`) that contains both the React frontend and the Express API server.
 
 **How it works:**
 
@@ -84,7 +84,7 @@ The Docker image itself runs fine on Windows — Docker Desktop uses WSL2 to run
 
 ### Option A — One-command install (recommended)
 
-Create a folder for TradeBuddy, open a terminal in it, and run:
+Create a folder for Vantage, open a terminal in it, and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/timwangnz/stock-trading-app/main/install.sh -o install.sh && bash install.sh
@@ -100,7 +100,7 @@ The script will:
 5. Write `.env`
 6. Pull the image and start the stack (`docker compose up -d`)
 7. Wait until the app is healthy, then scrub admin credentials from `.env`
-8. Schedule a daily midnight backup cron job to `~/Documents/TradeBuddy-Backups/`
+8. Schedule a daily midnight backup cron job to `~/Documents/Vantage-Backups/`
 9. Open `http://localhost:3001` in the browser
 
 After install, sign in as admin and go to **My Keys → App Settings** to add your API keys.
@@ -159,7 +159,7 @@ docker compose down -v        # ⚠ stop + remove everything including DB data
 docker compose logs -f app    # tail app logs
 docker compose pull           # pull latest image
 docker compose up -d          # restart with new image after pull
-bash backup.sh                # manual backup to ~/Documents/TradeBuddy-Backups/
+bash backup.sh                # manual backup to ~/Documents/Vantage-Backups/
 ```
 
 ## Upgrading to a new image
@@ -175,8 +175,8 @@ The entrypoint re-runs schema migrations on every start, so upgrades that add ne
 
 ## Backups
 
-The `backup.sh` script dumps the Postgres database to `~/Documents/TradeBuddy-Backups/backup-YYYY-MM-DD.sql` and keeps the last 7 days. If iCloud Drive is enabled on that folder, backups sync automatically off-machine.
+The `backup.sh` script dumps the Postgres database to `~/Documents/Vantage-Backups/backup-YYYY-MM-DD.sql` and keeps the last 7 days. If iCloud Drive is enabled on that folder, backups sync automatically off-machine.
 
-The container mounts `~/Documents/TradeBuddy-Backups` as `/backups` (read-only). On startup, if the DB is empty (e.g. after a disk failure wiped the Docker volume), the entrypoint automatically restores from the most recent backup in that folder.
+The container mounts `~/Documents/Vantage-Backups` as `/backups` (read-only). On startup, if the DB is empty (e.g. after a disk failure wiped the Docker volume), the entrypoint automatically restores from the most recent backup in that folder.
 
 This auto-restore only runs on the local Docker install. On cloud deployments (where `DATABASE_URL` is set, e.g. Railway), the restore step is skipped entirely.

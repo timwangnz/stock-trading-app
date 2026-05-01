@@ -350,7 +350,7 @@ export function deleteAgentContext(id) {
 
 /** List the user's connected MCP servers with their tools */
 export async function fetchMCPServersWithTools() {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   // Fetch servers list
   const servers = await request('GET', '/mcp-servers')
   // Fetch tools for each enabled server in parallel

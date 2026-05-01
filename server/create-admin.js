@@ -31,7 +31,7 @@ async function createAdmin() {
         port:     parseInt(process.env.DB_PORT || '5432'),
         user:     process.env.DB_USER,
         password: process.env.DB_PASSWORD,
-        database: process.env.DB_NAME || 'tradebuddy',
+        database: process.env.DB_NAME || 'vantage',
       }
 
   const client = new Client(clientConfig)

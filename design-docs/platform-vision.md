@@ -6,7 +6,7 @@
 
 ## The Insight
 
-TradeBuddy was built as a stock trading app. But look past the trading domain and what
+Vantage was built as a stock trading app. But look past the trading domain and what
 exists is something more valuable: a **complete infrastructure for AI-native business
 applications** — multi-provider LLM routing, encrypted credential storage, MCP tool
 integration, role-based auth, scheduled agents, audit logging, email, and an admin
@@ -48,7 +48,7 @@ Each product answers four questions. Everything else is already solved.
                          │  shared by all products
          ┌───────────────┼───────────────┐
          ▼               ▼               ▼
-   TradeBuddy        Meridian          CRM (next)
+   Vantage        Meridian          CRM (next)
    (trading)       (ecommerce)        (sales)
          │               │               │
    Connectors:     Connectors:      Connectors:
@@ -94,7 +94,7 @@ pattern, and type parsing are already in place.
 
 ## Current Products
 
-### TradeBuddy — Simulated Stock Trading Platform
+### Vantage — Simulated Stock Trading Platform
 *Status: Live*
 
 A stock trading simulator used in educational settings (classrooms, self-directed
@@ -169,11 +169,11 @@ As described in `agent-redesign.md` and `context-architecture.md`, the agent bui
 memory across four layers: platform defaults, expert context packs, personal notes,
 and learned behaviour. This system is product-agnostic — every new product inherits
 it immediately. An agent that learns a Meridian merchant's reorder preferences today
-uses the same memory infrastructure that learns a TradeBuddy student's risk tolerance.
+uses the same memory infrastructure that learns a Vantage student's risk tolerance.
 
 ### Skills (MCP) transfer
 
-A web search skill (Tavily, Brave) installed by a TradeBuddy user is available to
+A web search skill (Tavily, Brave) installed by a Vantage user is available to
 the Meridian agent and the CRM agent on day one. The MCP client, server registry,
 and skill discovery UI are shared. Skills compound in value the more products use them.
 
@@ -184,7 +184,7 @@ and skill discovery UI are shared. Skills compound in value the more products us
 ### Single-product deployment (default)
 
 ```bash
-PRODUCT=tradebuddy   # TradeBuddy only
+PRODUCT=vantage   # Vantage only
 PRODUCT=meridian     # Meridian only
 PRODUCT=crm          # CRM only
 ```
@@ -199,16 +199,16 @@ PRODUCT=all          # All products under one login
 ```
 
 A single organisation runs multiple products. Users see only the products their role
-grants access to. Useful for operators who use both TradeBuddy (for teaching) and
+grants access to. Useful for operators who use both Vantage (for teaching) and
 Meridian (for their own ecommerce business).
 
 ### Per-product branding
 
 Stored in `app_settings`, read via `ConfigContext.jsx` on load:
 
-| Setting | TradeBuddy | Meridian | CRM |
+| Setting | Vantage | Meridian | CRM |
 |---|---|---|---|
-| `app_name` | TradeBuddy | Meridian | (TBD) |
+| `app_name` | Vantage | Meridian | (TBD) |
 | `accent_color` | #0e7490 | #0d9488 | (TBD) |
 | `app_logo_url` | — | — | — |
 
@@ -295,7 +295,7 @@ spend 100% of their build effort on domain logic.
 
 **Deploy independently, share intelligence.** Products are separate deployments, but
 the agent framework, memory system, and skills layer improve centrally. A better
-classifier benefits TradeBuddy and Meridian and CRM simultaneously.
+classifier benefits Vantage and Meridian and CRM simultaneously.
 
 **Compounding over addition.** Each new product is not just another product — it is
 evidence that the platform works, a source of new agent learnings, and a magnet for
@@ -307,10 +307,10 @@ a new user segment. The value is multiplicative, not additive.
 
 - [ ] Platform name — what do we call the framework itself, distinct from the individual products?
 - [ ] Licensing model — open-source the platform, monetise the hosted products? Or keep closed?
-- [ ] Which product is the best third after TradeBuddy and Meridian? CRM feels natural given the `agent-redesign.md` reference, but worth validating.
+- [ ] Which product is the best third after Vantage and Meridian? CRM feels natural given the `agent-redesign.md` reference, but worth validating.
 - [ ] Multi-product orgs — when does it make sense to build the `PRODUCT=all` mode properly, with per-user product entitlements?
 - [ ] Context pack marketplace — expert-published packs (`context-architecture.md`) could become a cross-product content layer. A trading expert's pack and an ecommerce expert's pack live in the same catalog.
-- [ ] Agent identity — does each product have its own named agent (TradeBuddy Agent, Meridian Agent) or does the platform have a single agent identity that adapts to context?
+- [ ] Agent identity — does each product have its own named agent (Vantage Agent, Meridian Agent) or does the platform have a single agent identity that adapts to context?
 
 ---
 

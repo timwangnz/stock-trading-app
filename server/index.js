@@ -2790,6 +2790,6 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ TradeBuddy API running on port ${PORT} (${isProd ? 'production' : 'development'})`)
+  console.log(`✅ Vantage API running on port ${PORT} (${isProd ? 'production' : 'development'})`)
   console.log(`   DATABASE_URL: ${process.env.DATABASE_URL ? '✅ set' : '❌ missing'}`)
 })

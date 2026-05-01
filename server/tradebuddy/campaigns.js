@@ -23,7 +23,7 @@ async function getResend() {
   return new Resend(key)
 }
 async function getFrom() {
-  return await getAppSetting('email_from', 'EMAIL_FROM') || 'TradeBuddy <onboarding@resend.dev>'
+  return await getAppSetting('email_from', 'EMAIL_FROM') || 'Vantage <onboarding@resend.dev>'
 }
 
 // ── Audience filter schema ────────────────────────────────────────
@@ -177,7 +177,7 @@ export function resolveTokens(template, user) {
 export async function generateAIBody(aiPrompt, user, llmConfig) {
   const enrichedPrompt = resolveTokens(aiPrompt, user)
 
-  const systemPrompt = `You are an email copywriter for TradeBuddy, a stock trading platform.
+  const systemPrompt = `You are an email copywriter for Vantage, a stock trading platform.
 Write a personalized marketing email body based on the given prompt.
 The email should be friendly, professional, and concise (under 200 words).
 Return ONLY the email body text — no subject line, no "Dear X," salutation, no sign-off.
@@ -265,7 +265,7 @@ async function sendCampaignEmail({ to, subject, body }) {
       }</div>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0"/>
       <p style="color:#9ca3af;font-size:12px">
-        You're receiving this because you have a TradeBuddy account.<br/>
+        You're receiving this because you have a Vantage account.<br/>
         This is a simulated trading platform — not real financial advice.
       </p>
     </div>
@@ -328,7 +328,7 @@ export async function executeCampaign(campaignId, llmConfig) {
 
       await sendCampaignEmail({
         to:      user.email,
-        subject: resolveTokens(campaign.subject ?? 'Message from TradeBuddy', user),
+        subject: resolveTokens(campaign.subject ?? 'Message from Vantage', user),
         body,
       })
 

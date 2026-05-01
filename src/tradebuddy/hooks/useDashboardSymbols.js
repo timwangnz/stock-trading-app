@@ -20,7 +20,7 @@ const API = '/api/dashboard/symbols'
 
 // ── API helpers ───────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   const res = await fetch(path, {
     ...options,
     headers: {

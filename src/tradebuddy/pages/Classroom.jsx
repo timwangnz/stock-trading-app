@@ -697,7 +697,7 @@ function TeacherApplyForm({ form, set, error, submitting, onSubmit }) {
       </div>
 
       <p className="text-muted text-xs leading-relaxed">
-        We verify each application to ensure TradeBuddy remains a trusted tool for educators.
+        We verify each application to ensure Vantage remains a trusted tool for educators.
         Providing your school's website helps us verify faster.
       </p>
 

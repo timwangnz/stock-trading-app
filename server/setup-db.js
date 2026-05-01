@@ -1,6 +1,6 @@
 /**
  * server/setup-db.js
- * Creates all TradeBuddy tables in PostgreSQL from scratch.
+ * Creates all Vantage tables in PostgreSQL from scratch.
  * Run once with:  npm run db:setup
  * Safe to re-run — uses IF NOT EXISTS / ON CONFLICT guards.
  */
@@ -13,7 +13,7 @@ dotenv.config({ path: new URL('../.env', import.meta.url).pathname })
 const { Client } = pg
 
 async function setup() {
-  console.log('🔧 Setting up TradeBuddy database (PostgreSQL)…\n')
+  console.log('🔧 Setting up Vantage database (PostgreSQL)…\n')
 
   const clientConfig = process.env.DATABASE_URL
     ? { connectionString: process.env.DATABASE_URL.trim(), ssl: { rejectUnauthorized: false } }
@@ -22,7 +22,7 @@ async function setup() {
         port:     parseInt(process.env.DB_PORT || '5432'),
         user:     process.env.DB_USER,
         password: process.env.DB_PASSWORD,
-        database: process.env.DB_NAME || 'tradebuddy',
+        database: process.env.DB_NAME || 'vantage',
       }
 
   const client = new Client(clientConfig)

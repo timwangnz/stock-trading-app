@@ -1,4 +1,4 @@
-# Deploying TradeBuddy to Google Cloud Run
+# Deploying Vantage to Google Cloud Run
 
 ## Architecture
 

@@ -17,7 +17,7 @@ import { googleSignIn, googleSignInWithToken, emailSignUp, emailSignIn, setAuthT
 
 const AuthContext = createContext(null)
 
-const TOKEN_KEY     = 'tradebuddy_token'
+const TOKEN_KEY     = 'vantage_token'
 const USER_KEY      = 'tradebuddy_user'
 const VIEW_MODE_KEY = 'tradebuddy_view_mode'
 

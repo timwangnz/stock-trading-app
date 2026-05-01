@@ -29,7 +29,7 @@ There are no automated tests in this project.
 
 ## Architecture Overview
 
-TradeBuddy is a **simulated stock trading platform** built as a single-repo monolith: a React SPA (Vite) + an Express API server sharing the same `package.json`. In production, Express serves the built React app from `/dist` and handles all `/api/*` routes. In development, Vite proxies `/api/*` to `localhost:3001`.
+Vantage is a **simulated stock trading platform** built as a single-repo monolith: a React SPA (Vite) + an Express API server sharing the same `package.json`. In production, Express serves the built React app from `/dist` and handles all `/api/*` routes. In development, Vite proxies `/api/*` to `localhost:3001`.
 
 ### Request flow
 
@@ -146,3 +146,22 @@ See `.env.example`. Required for full functionality:
 - `POLYGON_API_KEY` — free tier at polygon.io
 - `RESEND_API_KEY` — for email features (optional in dev)
 - `GOOGLE_CLIENT_ID` / `VITE_GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — for Google Sign-In (optional)
+
+---
+
+## Pending rename: tradebuddy → vantage
+
+The product was renamed from TradeBuddy to **Vantage** (April 2026). All user-facing strings,
+localStorage keys (`vantage_token`), and docs have been updated.
+
+The following internal directory and identifier names still use the old name and should be
+migrated when convenient — requires updating all import paths across the codebase:
+
+- `src/tradebuddy/` → `src/vantage/`
+- `server/tradebuddy/` → `server/vantage/`
+- Component name `TradingAgent` → `VantageAgent` (in `TradingAgent.jsx` and all import sites)
+- `PRODUCT=tradebuddy` env var value → `PRODUCT=vantage` (in `server/index.js` conditionals and docker/deploy docs)
+
+**Note for existing users:** the localStorage key change (`tradebuddy_token` → `vantage_token`)
+will silently log out any users on a live deployment. Clear the old key or communicate the
+change before deploying to production.

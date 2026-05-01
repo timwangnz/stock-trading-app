@@ -1,7 +1,7 @@
 /**
  * AppContext.jsx
  *
- * Global state for the TradeBuddy app.
+ * Global state for the Vantage app.
  * Using React's built-in Context + useReducer pattern — a great
  * intermediate pattern to learn before reaching for Redux/Zustand.
  *

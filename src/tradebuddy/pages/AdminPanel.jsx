@@ -76,7 +76,7 @@ const PERMISSION_ROWS = [
 // ── Shared fetch helper ──────────────────────────────────────────
 
 async function adminFetch(path, options = {}) {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   const res   = await fetch(`/api${path}`, {
     ...options,
     headers: {

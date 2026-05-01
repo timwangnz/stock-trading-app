@@ -17,7 +17,7 @@ import { callLLM } from '../common/llm.js'
 
 // ── Classifier system prompt ──────────────────────────────────────────────────
 
-const CLASSIFIER_PROMPT = `You are an intent classifier for a stock trading assistant called TradeBuddy.
+const CLASSIFIER_PROMPT = `You are an intent classifier for a stock trading assistant called Vantage.
 Analyse the user message and return ONLY a valid JSON object — no explanation, no markdown, no extra text.
 
 Intent types:

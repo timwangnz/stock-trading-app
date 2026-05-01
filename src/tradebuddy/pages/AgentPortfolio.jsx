@@ -20,7 +20,7 @@ import { useApp, ACTIONS } from '../context/AppContext'
 import { useKeys } from '../../common/context/KeysContext'
 
 const API = (path, opts = {}) => {
-  const token = localStorage.getItem('tradebuddy_token')
+  const token = localStorage.getItem('vantage_token')
   return fetch(`/api/agent-portfolio${path}`, {
     ...opts,
     headers: {

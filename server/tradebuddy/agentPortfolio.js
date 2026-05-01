@@ -122,7 +122,7 @@ async function getLLMDecisions({ settings, holdings, prices, newsBlock, totalVal
     .map(([sym, p]) => `  ${sym}: $${p.toFixed(2)}`)
     .join('\n')
 
-  const systemPrompt = `You are an autonomous portfolio manager for a simulated trading app called TradeBuddy.
+  const systemPrompt = `You are an autonomous portfolio manager for a simulated trading app called Vantage.
 Your job is to rebalance a virtual portfolio each ${settings.frequency} cycle.
 
 USER'S INVESTMENT BIAS / STRATEGY:

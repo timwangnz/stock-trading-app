@@ -202,9 +202,9 @@ Each platform (Amazon, Shopify, eBay) provides isolated analytics with different
 
 ---
 
-## 15. Shared Infrastructure with TradeBuddy
+## 15. Shared Infrastructure with Vantage
 
-Meridian and TradeBuddy share a single codebase and deployment image. A `PRODUCT` env var controls which modules load at runtime.
+Meridian and Vantage share a single codebase and deployment image. A `PRODUCT` env var controls which modules load at runtime.
 
 ### Shared common modules (`server/common/`)
 
@@ -227,7 +227,7 @@ Frontend `src/common/` is also shared:
 A single env var controls what the app loads:
 
 ```
-PRODUCT=tradebuddy   # loads only TradeBuddy routes and pages
+PRODUCT=vantage   # loads only Vantage routes and pages
 PRODUCT=meridian     # loads only Meridian routes and pages
 PRODUCT=all          # loads everything (default for dev)
 ```
@@ -242,7 +242,7 @@ const loadMeridian   = PRODUCT === 'meridian'   || PRODUCT === 'all'
 if (loadTradebuddy) {
   app.use('/api', marketRouter)
   app.use('/api', financialsRouter)
-  // ... rest of TradeBuddy routes
+  // ... rest of Vantage routes
 }
 if (loadMeridian) {
   app.use('/api/meridian', authMiddleware, meridianRouter)
@@ -261,7 +261,7 @@ const PAGES = {
   login: Login,
   settings: Settings,
 
-  // TradeBuddy only
+  // Vantage only
   ...(PRODUCT !== 'meridian' && {
     dashboard: Dashboard,
     portfolio: Portfolio,
@@ -280,9 +280,9 @@ const PAGES = {
 
 Product name, logo, and accent color are stored in `app_settings` and read via `ConfigContext.jsx` on load — no hardcoded strings in components:
 
-| Setting key | TradeBuddy | Meridian |
+| Setting key | Vantage | Meridian |
 |---|---|---|
-| `app_name` | TradeBuddy | Meridian |
+| `app_name` | Vantage | Meridian |
 | `app_logo_url` | — | — |
 | `accent_color` | #0e7490 | #0d9488 |
 
@@ -291,7 +291,7 @@ Product name, logo, and accent color are stored in `app_settings` and read via `
 ```
 server/
   common/          ← shared, untouched
-  tradebuddy/      ← TradeBuddy-specific modules
+  tradebuddy/      ← Vantage-specific modules
   meridian/        ← Meridian-specific modules (new)
     amazon/
       oauth.js         ← LWA OAuth flow, token exchange
@@ -305,7 +305,7 @@ server/
 
 src/
   common/          ← shared contexts and apiService.js
-  tradebuddy/      ← TradeBuddy pages, components, hooks
+  tradebuddy/      ← Vantage pages, components, hooks
   meridian/        ← Meridian pages and components (new)
     pages/
       Connect.jsx
@@ -321,8 +321,8 @@ src/
 Same image, different env vars:
 
 ```bash
-# TradeBuddy deployment
-docker run -e PRODUCT=tradebuddy -e VITE_PRODUCT=tradebuddy ...
+# Vantage deployment
+docker run -e PRODUCT=vantage -e VITE_PRODUCT=vantage ...
 
 # Meridian deployment
 docker run -e PRODUCT=meridian -e VITE_PRODUCT=meridian ...

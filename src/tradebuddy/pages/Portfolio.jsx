@@ -179,7 +179,7 @@ function AddHoldingForm({ onAdd, onCancel, canManualPrice }) {
     if (!symbol || canManualPrice) { setLivePrice(null); return }
     setFetching(true)
     fetch(`/api/market/snapshots?symbols=${symbol}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('tradebuddy_token')}` }
+      headers: { Authorization: `Bearer ${localStorage.getItem('vantage_token')}` }
     })
       .then(r => r.json())
       .then(data => {

@@ -45,7 +45,7 @@ export default function ResetPassword({ token, onDone }) {
         <div className="w-12 h-12 rounded-xl bg-accent-blue/10 flex items-center justify-center">
           <TrendingUp size={22} className="text-accent-blue" />
         </div>
-        <h1 className="text-primary font-bold text-2xl tracking-tight">TradeBuddy</h1>
+        <h1 className="text-primary font-bold text-2xl tracking-tight">Vantage</h1>
       </div>
 
       <div className="bg-surface-card border border-border rounded-2xl p-6 w-80 shadow-2xl space-y-5">

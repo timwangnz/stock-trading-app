@@ -31,7 +31,7 @@ import { classifyIntent } from './classifyIntent.js'
 const __dir      = dirname(fileURLToPath(import.meta.url))
 const USER_GUIDE = (() => {
   try {
-    return readFileSync(join(__dir, '../TradeBuddy-User-Guide.md'), 'utf8')
+    return readFileSync(join(__dir, '../Vantage-User-Guide.md'), 'utf8')
   } catch {
     return '' // guide missing — agent still works without it
   }
@@ -188,14 +188,20 @@ async function fetchLiveMarketContext(tickers, { generalNews = false } = {}) {
     // Full block = prices + news (used when no MCP tools are connected)
     const contextBlock = priceBlock + newsBlock
 
+    // priceMap: symbol → { price, prevClose } — used by runPortfolioQuery for P&L calc
+    const priceMap = Object.fromEntries(
+      snapshots.map(s => [s.symbol, { price: s.price, prevClose: s.prevClose }])
+    )
+
     return {
       contextBlock,
       priceBlock,   // prices only — used when MCP tools handle news
+      priceMap,     // raw price lookup for server-side P&L calculations
       tickersFetched: snapshots.map(s => s.symbol),
       newsArticles:   allArticles,
     }
   } catch {
-    return { contextBlock: null, priceBlock: null, tickersFetched: [], newsArticles: [] }
+    return { contextBlock: null, priceBlock: null, priceMap: {}, tickersFetched: [], newsArticles: [] }
   }
 }
 
@@ -436,7 +442,7 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
       return runResearchLoop({ message, portfolio, portfolioText, classification, llmCfg, mcpServers, userContext })
 
     case 'portfolio_query':
-      return runPortfolioQuery({ message, portfolio, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext })
+      return runPortfolioQuery({ message, portfolio, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext, userId })
 
     case 'general_question':
     default:
@@ -550,15 +556,18 @@ async function runResearchLoop({ message, portfolioText, classification, llmCfg,
 // ── Step 2C: Portfolio query ─────────────────────────────────────────────────
 // Pre-fetch prices + news for all held tickers, then single LLM call.
 
-async function runPortfolioQuery({ message, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext }) {
+async function runPortfolioQuery({ message, portfolio, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext }) {
   const tickersToFetch = portfolioTickers.slice(0, 5)
 
-  const { contextBlock, tickersFetched, newsArticles } =
+  const { contextBlock, priceMap = {}, tickersFetched, newsArticles } =
     tickersToFetch.length > 0
       ? await fetchLiveMarketContext(tickersToFetch, { generalNews: false })
-      : { contextBlock: null, tickersFetched: [], newsArticles: [] }
+      : { contextBlock: null, priceMap: {}, tickersFetched: [], newsArticles: [] }
 
-  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock, mcpSection: '', userContext })
+  // ── Compute P&L block server-side so the LLM doesn't have to do arithmetic ──
+  const plBlock = buildPortfolioPLBlock(portfolio, priceMap)
+
+  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock, mcpSection: plBlock, userContext })
 
   const { text } = await callLLM(llmCfg, {
     systemPrompt,
@@ -573,6 +582,74 @@ async function runPortfolioQuery({ message, portfolioText, portfolioTickers, llm
     newsArticles,
     mcpToolUsed: null,
   }
+}
+
+/**
+ * Build a pre-calculated P&L section for every holding using live prices.
+ * Injected into the system prompt so the LLM reads the answer instead of
+ * computing it — prevents arithmetic errors and "I cannot calculate" responses.
+ *
+ * @param {Array}  portfolio  — [{ symbol, shares, avgCost }]
+ * @param {object} priceMap   — { AAPL: 185.00, TSLA: 250.00, ... }
+ * @returns {string}  formatted block, or '' if no prices available
+ */
+function buildPortfolioPLBlock(portfolio, priceMap) {
+  if (!portfolio?.length || !Object.keys(priceMap).length) return ''
+
+  let totalCurrentValue  = 0
+  let totalCostBasis     = 0
+  let totalTodayGain     = 0
+  const rows = []
+
+  for (const h of portfolio) {
+    const sym      = h.symbol
+    const shares   = Number(h.shares)  || 0
+    const avgCost  = Number(h.avgCost) || 0
+    const entry    = priceMap[sym]
+
+    if (!entry) continue  // no live price — skip from totals
+
+    const { price, prevClose } = entry
+
+    // Today's gain = move from yesterday's close
+    const todayGain    = shares * (price - (prevClose || price))
+    const todayGainPct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0
+
+    // Unrealized P&L = move from avg cost
+    const costBasis    = shares * avgCost
+    const currentValue = shares * price
+    const totalGain    = currentValue - costBasis
+    const totalGainPct = costBasis > 0 ? (totalGain / costBasis) * 100 : 0
+
+    totalCurrentValue += currentValue
+    totalCostBasis    += costBasis
+    totalTodayGain    += todayGain
+
+    const todayDir = todayGain >= 0 ? '▲' : '▼'
+    const plDir    = totalGain >= 0 ? '▲' : '▼'
+
+    rows.push(
+      `  ${sym}: ${shares} shares | live $${price.toFixed(2)} | ` +
+      `today ${todayDir} $${Math.abs(todayGain).toFixed(2)} (${todayGainPct >= 0 ? '+' : ''}${todayGainPct.toFixed(2)}%) | ` +
+      `unrealized P&L ${plDir} $${Math.abs(totalGain).toFixed(2)} (${totalGainPct >= 0 ? '+' : ''}${totalGainPct.toFixed(2)}%) vs avg cost $${avgCost.toFixed(2)}`
+    )
+  }
+
+  if (rows.length === 0) return ''
+
+  const portfolioTotalGain    = totalCurrentValue - totalCostBasis
+  const portfolioTotalGainPct = totalCostBasis > 0 ? (portfolioTotalGain / totalCostBasis) * 100 : 0
+  const todayDir  = totalTodayGain >= 0 ? '▲' : '▼'
+  const totalDir  = portfolioTotalGain >= 0 ? '▲' : '▼'
+
+  return [
+    '\n\n💰 PORTFOLIO P&L (pre-calculated from live prices — use these exact figures):',
+    rows.join('\n'),
+    `\n  TOTALS — Today: ${todayDir} $${Math.abs(totalTodayGain).toFixed(2)} | ` +
+      `Unrealized P&L: ${totalDir} $${Math.abs(portfolioTotalGain).toFixed(2)} ` +
+      `(${portfolioTotalGainPct >= 0 ? '+' : ''}${portfolioTotalGainPct.toFixed(2)}%) | ` +
+      `Current value: $${totalCurrentValue.toFixed(2)}`,
+  ].join('\n')
 }
 
 // ── Step 2D: General question ────────────────────────────────────────────────
@@ -603,7 +680,7 @@ function buildSystemPrompt({ portfolioText, contextBlock, mcpSection, userContex
   const userContextSection = buildUserContextBlock(userContext)
   const now = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' })
 
-  return `You are a knowledgeable trading assistant for TradeBuddy.
+  return `You are a knowledgeable trading assistant for Vantage.
 Help the user with anything trading or markets related — market hours, news, analysis, general finance questions, and portfolio management.
 You can execute trades and answer general knowledge questions.
 

@@ -1,6 +1,6 @@
 /**
  * About.jsx
- * Project summary page — describes TradeBuddy and how it was built
+ * Project summary page — describes Vantage and how it was built
  * entirely through Claude Cowork with no manual coding.
  */
 
@@ -137,13 +137,13 @@ export default function About() {
             <TrendingUp size={20} className="text-accent-blue" />
           </div>
           <div>
-            <h1 className="text-primary font-bold text-2xl">TradeBuddy</h1>
+            <h1 className="text-primary font-bold text-2xl">Vantage</h1>
             <p className="text-muted text-sm">AI-powered vibe trading platform</p>
           </div>
         </div>
 
         <p className="text-secondary text-base leading-relaxed mb-3">
-          TradeBuddy is a full-stack vibe trading app built entirely through natural language using
+          Vantage is a full-stack vibe trading app built entirely through natural language using
           <span className="text-accent-blue font-medium"> Claude Cowork</span> — Anthropic's desktop
           agentic coding tool. The entire application — from the React frontend to the Express backend,
           PostgreSQL schema, Docker deployment, and security hardening — was built through conversation.
@@ -233,7 +233,7 @@ export default function About() {
               <p className="text-primary font-semibold text-sm mb-1">Runs on any Mac — no technical experience needed</p>
               <p className="text-secondary text-base leading-relaxed">
                 Buy a Mac Mini, install Docker Desktop (one GUI installer), open Terminal, and run one command.
-                The script asks a few questions, generates all secrets automatically, and opens TradeBuddy
+                The script asks a few questions, generates all secrets automatically, and opens Vantage
                 in your browser — usually in under 5 minutes.
               </p>
             </div>
@@ -285,7 +285,7 @@ export default function About() {
                   <p className="text-blue-400">✓ Docker is running</p>
                   <p className="text-blue-400">✓ Database ready</p>
                   <p className="text-blue-400">✓ App running at http://localhost:3001</p>
-                  <p className="text-green-400">🎉 TradeBuddy is running! Opening browser...</p>
+                  <p className="text-green-400">🎉 Vantage is running! Opening browser...</p>
                 </div>
               </div>
             </div>
@@ -345,7 +345,7 @@ export default function About() {
 
           <div className="bg-accent-blue/5 border border-accent-blue/15 rounded-lg p-4">
             <p className="text-secondary text-base leading-relaxed">
-              💡 <span className="text-primary font-medium">Why build TradeBuddy?</span> After 35 years
+              💡 <span className="text-primary font-medium">Why build Vantage?</span> After 35 years
               of writing code the hard way, Dr. Tim wanted to see what was possible when you hand the
               keyboard to an AI and just describe what you want. The answer, it turns out, is: quite a lot —
               and in a fraction of the time. This project is his proof of concept that in the age of AI,

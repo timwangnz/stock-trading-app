@@ -173,7 +173,7 @@ export default function Sidebar({ open, onToggle }) {
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <TrendingUp className="text-accent-blue shrink-0" size={20} />
               <div className="min-w-0">
-                <p className="text-primary font-semibold text-base tracking-tight leading-tight truncate">TradeBuddy</p>
+                <p className="text-primary font-semibold text-base tracking-tight leading-tight truncate">Vantage</p>
                 <p className="text-muted text-xs truncate">{styles.subtitle}</p>
               </div>
             </div>

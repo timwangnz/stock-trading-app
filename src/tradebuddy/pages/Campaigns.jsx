@@ -289,7 +289,7 @@ function CampaignModal({ campaign, token, onClose, onSaved }) {
                       rows={10}
                       value={form.body_template}
                       onChange={field('body_template')}
-                      placeholder={"Hi {{name}},\n\nYour portfolio is currently worth {{portfolio_value}}...\n\nBest,\nThe TradeBuddy Team"}
+                      placeholder={"Hi {{name}},\n\nYour portfolio is currently worth {{portfolio_value}}...\n\nBest,\nThe Vantage Team"}
                       className="w-full bg-surface border border-border rounded-lg px-3 py-2.5 text-sm text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent-blue resize-none font-mono"
                     />
                   </div>

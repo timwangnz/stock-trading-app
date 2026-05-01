@@ -42,10 +42,10 @@ export default function Header({ agentOpen, onToggleAgent }) {
         <div className="flex items-center gap-1.5 shrink-0">
           <img
             src="https://t3.ftcdn.net/jpg/01/36/20/40/360_F_136204027_JgHaab2r1wqenjQd6m1PNDJ6J9PM8tvH.jpg"
-            alt="TradeBuddy logo"
+            alt="Vantage logo"
             className="h-8 w-8 rounded-lg object-cover"
           />
-          <span className="text-primary font-bold text-sm tracking-tight hidden sm:inline">TradeBuddy</span>
+          <span className="text-primary font-bold text-sm tracking-tight hidden sm:inline">Vantage</span>
         </div>
 
         <div className="w-px h-5 bg-surface-hover hidden sm:block" />

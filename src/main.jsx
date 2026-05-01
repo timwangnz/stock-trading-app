@@ -13,7 +13,7 @@ import App from './App.jsx'
 // they appear in the admin Error Log. Fire-and-forget — never throws.
 function reportClientError(message, details = null) {
   try {
-    const token = localStorage.getItem('tradebuddy_token')
+    const token = localStorage.getItem('vantage_token')
     fetch('/api/client-error', {
       method:  'POST',
       headers: {

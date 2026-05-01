@@ -1,7 +1,7 @@
 /**
  * CustomerProfile.jsx
  * -------------------
- * A full-featured customer profile page, wired into TradeBuddy.
+ * A full-featured customer profile page, wired into Vantage.
  *
  * React concepts demonstrated:
  *  1. useState   — edit mode, tags, collapsible sections, loading/saving state

@@ -16,7 +16,7 @@ async function getResend() {
 }
 
 async function getFrom() {
-  return await getAppSetting('email_from', 'EMAIL_FROM') || 'TradeBuddy <onboarding@resend.dev>'
+  return await getAppSetting('email_from', 'EMAIL_FROM') || 'Vantage <onboarding@resend.dev>'
 }
 
 // Shared send helper — silently skips if Resend is not configured
@@ -33,13 +33,13 @@ async function sendEmail(payload) {
 export async function sendClassInviteEmail({ to, className, schoolName, teacherName, joinUrl }) {
   await sendEmail({
     to,
-    subject: `You're invited to join ${className} on TradeBuddy`,
+    subject: `You're invited to join ${className} on Vantage`,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#1a1a1a;margin-bottom:8px">You've been invited! 🎉</h2>
         <p style="color:#555;margin-bottom:24px">
           <strong>${teacherName}</strong> has invited you to join
-          <strong>${className}</strong> at ${schoolName} on TradeBuddy —
+          <strong>${className}</strong> at ${schoolName} on Vantage —
           a simulated stock trading platform where you can practice investing with virtual money,
           compete on the class leaderboard, and share trading ideas with your classmates.
         </p>
@@ -60,19 +60,19 @@ export async function sendClassInviteEmail({ to, className, schoolName, teacherN
 export async function sendTeacherApprovedEmail({ to, name, appUrl }) {
   await sendEmail({
     to,
-    subject: '🎉 Your TradeBuddy teacher account is approved!',
+    subject: '🎉 Your Vantage teacher account is approved!',
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#1a1a1a;margin-bottom:8px">You're verified! 🎓</h2>
         <p style="color:#555;margin-bottom:24px">
           Hi ${name || 'there'},<br/><br/>
-          Great news — your teacher account on TradeBuddy has been verified.
+          Great news — your teacher account on Vantage has been verified.
           You can now create classes, invite students, and manage your roster.
         </p>
         <a href="${appUrl}"
            style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
                   padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">
-          Open TradeBuddy
+          Open Vantage
         </a>
         <p style="color:#999;font-size:12px;margin-top:24px">
           Head to <strong>My Classes</strong> in the sidebar to get started.
@@ -85,7 +85,7 @@ export async function sendTeacherApprovedEmail({ to, name, appUrl }) {
 export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
   await sendEmail({
     to,
-    subject: 'TradeBuddy teacher application update',
+    subject: 'Vantage teacher application update',
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#1a1a1a;margin-bottom:8px">Application update</h2>
@@ -101,7 +101,7 @@ export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
         <a href="${appUrl}"
            style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
                   padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px">
-          Open TradeBuddy
+          Open Vantage
         </a>
       </div>
     `,
@@ -111,7 +111,7 @@ export async function sendTeacherRejectedEmail({ to, name, reason, appUrl }) {
 export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalUsers }) {
   await sendEmail({
     to,
-    subject: `⚠️ TradeBuddy snapshot failures — ${date}`,
+    subject: `⚠️ Vantage snapshot failures — ${date}`,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#b91c1c;margin-bottom:8px">Daily snapshot failed</h2>
@@ -127,7 +127,7 @@ export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalU
           <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">POST /api/internal/snapshot-all</code>
         </p>
         <p style="color:#999;font-size:12px;margin-top:24px">
-          This alert was sent automatically by the TradeBuddy snapshot scheduler.
+          This alert was sent automatically by the Vantage snapshot scheduler.
         </p>
       </div>
     `,
@@ -141,16 +141,16 @@ export async function sendSnapshotFailureEmail({ to, date, failedUserIds, totalU
 export async function sendPromptResultEmail({ to, subject, body }) {
   await sendEmail({
     to,
-    subject: subject || 'TradeBuddy Prompt Result',
+    subject: subject || 'Vantage Prompt Result',
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:24px">
           <span style="font-size:20px">🤖</span>
-          <span style="font-weight:600;color:#1a1a1a;font-size:16px">TradeBuddy Prompt Result</span>
+          <span style="font-weight:600;color:#1a1a1a;font-size:16px">Vantage Prompt Result</span>
         </div>
         <div style="background:#f8f9fa;border-radius:8px;padding:20px;color:#374151;font-size:14px;line-height:1.7;white-space:pre-wrap">${body}</div>
         <p style="color:#9ca3af;font-size:12px;margin-top:24px">
-          This was generated by a scheduled prompt in your TradeBuddy Prompt Manager.
+          This was generated by a scheduled prompt in your Vantage Prompt Manager.
         </p>
       </div>
     `,
@@ -160,13 +160,13 @@ export async function sendPromptResultEmail({ to, subject, body }) {
 export async function sendPasswordResetEmail({ to, name, resetUrl }) {
   await sendEmail({
     to,
-    subject: 'Reset your TradeBuddy password',
+    subject: 'Reset your Vantage password',
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#1a1a1a;margin-bottom:8px">Reset your password</h2>
         <p style="color:#555;margin-bottom:24px">
           Hi ${name || 'there'},<br/><br/>
-          We received a request to reset your TradeBuddy password.
+          We received a request to reset your Vantage password.
           Click the button below to choose a new one. The link expires in <strong>1 hour</strong>.
         </p>
         <a href="${resetUrl}"
