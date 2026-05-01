@@ -30,7 +30,7 @@ async function setup() {
   await client.connect()
 
   // ── users ─────────────────────────────────────────────────────
-  // role:        admin | teacher | premium | user | readonly
+  // role:        admin | teacher | premium | student | user | readonly
   // is_disabled: admin can block a user from signing in
   await client.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -40,10 +40,20 @@ async function setup() {
       avatar_url    VARCHAR(500),
       password_hash VARCHAR(255) NULL,
       role          VARCHAR(20)  NOT NULL DEFAULT 'user'
-                    CHECK (role IN ('admin','teacher','premium','user','readonly')),
+                    CHECK (role IN ('admin','teacher','premium','student','user','readonly')),
       is_disabled   BOOLEAN      NOT NULL DEFAULT FALSE,
       created_at    TIMESTAMPTZ  DEFAULT NOW()
     )
+  `)
+  // Patch existing DBs: drop the old constraint (missing 'student') and recreate it.
+  // This is idempotent — if the constraint is already correct it's a no-op.
+  await client.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+      ALTER TABLE users ADD CONSTRAINT users_role_check
+        CHECK (role IN ('admin','teacher','premium','student','user','readonly'));
+    END$$
   `)
   console.log('✅ Table "users" ready')
 

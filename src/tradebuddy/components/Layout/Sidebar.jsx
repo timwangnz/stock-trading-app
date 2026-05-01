@@ -42,7 +42,6 @@ const TRADER_NAV = [
   { label: 'Portfolio',     page: 'portfolio',    icon: Briefcase       },
   { label: 'AI Portfolio',  page: 'agentportfolio',icon: Bot            },
   { label: 'History',       page: 'history',      icon: BarChart2       },
-  { label: 'Ideas',         page: 'ideas',        icon: Lightbulb       },
   { label: 'Activity',      page: 'activity',     icon: Activity        },
   { label: 'Prompt Manager',page: 'promptmanager',icon: Wand2           },
 ]

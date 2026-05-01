@@ -1,12 +1,21 @@
 /**
- * server/agent.js
- * Trading agent powered by the user's chosen LLM provider.
- * Supports Anthropic (Claude), OpenAI (GPT), and Google (Gemini).
- * Tool definitions are kept in Anthropic format; llm.js converts them.
+ * server/tradebuddy/agent.js
+ * Trading agent — hybrid agentic loop.
  *
- * Live market data: before every LLM call we extract ticker symbols from
- * the user message, fetch current snapshots from Polygon.io, and inject
- * them into the system prompt — so the agent always answers with real prices.
+ * Architecture (see design-docs/agent-redesign.md):
+ *
+ *   User message
+ *     → classifyIntent()          fast LLM call, returns structured JSON
+ *     → route by intent:
+ *         trade_command    → single LLM call + trade tools   (Step 2A)
+ *         research_query   → runResearchLoop()               (Step 2B)
+ *         portfolio_query  → pre-fetch holdings → single LLM (Step 2C)
+ *         general_question → single LLM, no tools            (Step 2D)
+ *
+ * The regex heuristics (isTradeCommand, isResearchQuery, isPortfolioQuery,
+ * extractTickers, TICKER_STOP, NAME_TO_TICKER) have been removed.
+ * The regex fallback now lives inside classifyIntent.js and is only used
+ * when the LLM classifier call itself fails.
  */
 
 import { readFileSync } from 'fs'
@@ -16,6 +25,7 @@ import pool from '../common/db.js'
 import { callLLM } from '../common/llm.js'
 import { callMCPTool } from '../common/mcp.js'
 import { getAppSetting } from '../common/appSettings.js'
+import { classifyIntent } from './classifyIntent.js'
 
 // Load the user guide once at startup so the agent can answer UI how-to questions
 const __dir      = dirname(fileURLToPath(import.meta.url))
@@ -28,49 +38,6 @@ const USER_GUIDE = (() => {
 })()
 
 // ── Live market data helpers ─────────────────────────────────────
-
-// Common English words that look like tickers — never treat these as symbols
-const TICKER_STOP = new Set([
-  'A','I','OK','MY','IN','AT','ON','IF','OR','BY','TO','OF','AN',
-  'AS','UP','IS','IT','DO','SO','GO','NO','US','ME','HE','WE',
-  'AI','CEO','CFO','COO','ETF','IPO','GDP','USD','EUR','THE',
-  'AND','FOR','ALL','BUY','SELL','THIS','THAT','WHAT','WITH',
-])
-
-// Well-known company names → ticker (lower-cased keys)
-const NAME_TO_TICKER = {
-  apple: 'AAPL', microsoft: 'MSFT', google: 'GOOGL', alphabet: 'GOOGL',
-  amazon: 'AMZN', tesla: 'TSLA', meta: 'META', facebook: 'META',
-  nvidia: 'NVDA', netflix: 'NFLX', uber: 'UBER', airbnb: 'ABNB',
-  coinbase: 'COIN', palantir: 'PLTR', shopify: 'SHOP', spotify: 'SPOT',
-  intel: 'INTC', amd: 'AMD', qualcomm: 'QCOM', disney: 'DIS',
-  walmart: 'WMT', visa: 'V', mastercard: 'MA', paypal: 'PYPL',
-  salesforce: 'CRM', oracle: 'ORCL', ibm: 'IBM', boeing: 'BA',
-}
-
-/**
- * Extract stock ticker symbols from a free-text message.
- * Looks for $AAPL-style, plain UPPERCASE words, and known company names.
- */
-function extractTickers(text) {
-  const tickers = new Set()
-  const lower   = text.toLowerCase()
-
-  // $TICKER pattern
-  for (const m of text.matchAll(/\$([A-Z]{1,5})\b/g)) tickers.add(m[1])
-
-  // Plain UPPERCASE 2–5 letter words
-  for (const m of text.matchAll(/\b([A-Z]{2,5})\b/g)) {
-    if (!TICKER_STOP.has(m[1])) tickers.add(m[1])
-  }
-
-  // Company name → ticker
-  for (const [name, sym] of Object.entries(NAME_TO_TICKER)) {
-    if (lower.includes(name)) tickers.add(sym)
-  }
-
-  return [...tickers]
-}
 
 /**
  * Fetch up to 3 recent news articles for a single ticker from Polygon.
@@ -438,7 +405,8 @@ function buildUserContextBlock(userContext = []) {
 }
 
 export async function runTradingAgent({ userId, message, portfolio, llmConfig = {}, mcpServers = [], userContext = [] }) {
-  const portfolioText = portfolio.length === 0
+  const portfolioTickers = (portfolio ?? []).map(h => h.symbol).filter(Boolean)
+  const portfolioText    = portfolio.length === 0
     ? 'The portfolio is currently empty.'
     : portfolio
         .map(h =>
@@ -447,41 +415,90 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
         )
         .join('\n')
 
-  // ── Step 1: extract tickers ──────────────────────────────────────
-  const portfolioTickers = (portfolio ?? []).map(h => h.symbol).filter(Boolean)
-  let   candidateTickers = extractTickers(message)
-
-  // ── Step 2: detect intent ─────────────────────────────────────────
-  const isTradeCommand   = /\b(buy\s+[\d.]+|sell\s+([\d.]+|half|all)|remove|close\s+(my\s+)?[A-Z]{1,5}|exit)\b/i.test(message)
-  const isResearchQuery  = /\b(news|latest|update|analysis|analyst|forecast|outlook|report|earnings|recommend|should i|what.s happening|tell me about|how is|why (is|did|has)|what do you think|last (week|friday|monday|tuesday|wednesday|thursday|saturday|sunday|month|year|quarter)|yesterday|performance|how did|what did|what happened|happened|did .* open|is .* open|market open|market close|after.?hours|pre.?market|this week|today.s|this morning)\b/i.test(message)
-  const isPortfolioQuery = /\b(portfolio|holdings?|positions?|my stock|mine)\b/i.test(message)
-  const needsMCPSearch   = !isTradeCommand && isResearchQuery
-
-  // When no tickers found, fall back to portfolio holdings for research/portfolio queries
-  if (candidateTickers.length === 0 && (isPortfolioQuery || (isResearchQuery && portfolioTickers.length > 0))) {
-    candidateTickers = portfolioTickers.slice(0, 5)
+  const llmCfg = {
+    provider: llmConfig.provider || 'anthropic',
+    model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
+    apiKey:   llmConfig.apiKey   || null,
   }
 
-  // Flag general market news when user asks broadly with no specific tickers
-  const needsGeneralNews = !isTradeCommand && isResearchQuery && candidateTickers.length === 0
+  // ── Step 1: LLM classifier ───────────────────────────────────────
+  // Replaces all regex heuristics. Returns structured intent + tickers.
+  const classification = await classifyIntent(message, portfolioTickers, llmCfg)
+  const { intent, tickers, needs_live_prices, needs_news, needs_general_market } = classification
 
-  // ── Step 3: collect MCP tool definitions ─────────────────────────
+  // ── Step 2: route to the correct execution path ──────────────────
+  switch (intent) {
+
+    case 'trade_command':
+      return runTradeCommand({ message, portfolio, portfolioText, classification, llmCfg, mcpServers, userContext, userId })
+
+    case 'research_query':
+      return runResearchLoop({ message, portfolio, portfolioText, classification, llmCfg, mcpServers, userContext })
+
+    case 'portfolio_query':
+      return runPortfolioQuery({ message, portfolio, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext })
+
+    case 'general_question':
+    default:
+      return runGeneralQuestion({ message, portfolioText, llmCfg, userContext })
+  }
+}
+
+// ── Step 2A: Trade command ───────────────────────────────────────────────────
+// Same as before but tickers come from the classifier, not regex.
+
+async function runTradeCommand({ message, portfolioText, classification, llmCfg, mcpServers, userContext, userId }) {
+  const tickers = classification.tickers
+
+  // Pre-fetch live price for the target ticker(s)
+  const { contextBlock, tickersFetched, newsArticles } =
+    tickers.length > 0
+      ? await fetchLiveMarketContext(tickers, { generalNews: false })
+      : { contextBlock: null, tickersFetched: [], newsArticles: [] }
+
+  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock, mcpSection: '', userContext })
+
+  const { text, toolName, toolInput } = await callLLM(llmCfg, {
+    systemPrompt,
+    userMessage: message,
+    tools: TOOLS,
+  })
+
+  if (!toolName) {
+    return { response: text ?? "I couldn't parse that trade. Try something like \"buy 10 AAPL\" or \"sell half my TSLA\".", trade: null, tickersFetched, newsArticles }
+  }
+
+  const confidence = toolInput?.confidence ?? 1
+  const { livePrice, blocker } = await validateTrade(toolName, toolInput, userId)
+
+  if (blocker) return { response: blocker, trade: null, pendingTrade: null, tickersFetched, newsArticles }
+
+  if (confidence < TRADE_CONFIDENCE_THRESHOLD) {
+    return { response: null, pendingTrade: { toolName, ...toolInput, livePrice }, trade: null, tickersFetched, newsArticles }
+  }
+
+  return executeTrade({ toolName, toolInput, userId, livePrice, contextBlock, tickersFetched, newsArticles })
+}
+
+// ── Step 2B: Research query — agentic loop ───────────────────────────────────
+// The LLM is given data-fetching tools and decides what to retrieve.
+// Phase 1: pre-fetch based on classifier hints, then single LLM call.
+// Phase 2 (future): true multi-turn loop where LLM calls tools iteratively.
+
+async function runResearchLoop({ message, portfolioText, classification, llmCfg, mcpServers, userContext }) {
+  const { tickers, needs_live_prices, needs_news, needs_general_market } = classification
+
+  // Collect MCP search tools
   const mcpToolDefs = mcpServers.flatMap(s => s._tools ?? [])
+  const searchTools = mcpToolDefs.filter(t =>
+    /search|news|crawl|fetch|browse|retrieve|web/i.test(t.name + ' ' + (t.description ?? ''))
+  )
 
-  // Find "search" tools — only used when the query warrants external lookup
-  const searchTools = needsMCPSearch
-    ? mcpToolDefs.filter(t =>
-        /search|news|crawl|fetch|browse|retrieve|web/i.test(t.name + ' ' + (t.description ?? ''))
-      )
-    : []
-
-  // ── Step 4: pre-fetch relevant context sources in parallel ────────
+  // Pre-fetch everything the classifier says we need, in parallel
   const [marketCtx, ...mcpResults] = await Promise.allSettled([
-    fetchLiveMarketContext(candidateTickers, { generalNews: needsGeneralNews }),
+    fetchLiveMarketContext(tickers, { generalNews: needs_general_market }),
     ...searchTools.map(tool => {
-      const query = candidateTickers.length > 0
-        ? `${message} ${candidateTickers.join(' ')}`
-        : message
+      const query = tickers.length > 0 ? `${message} ${tickers.join(' ')}` : message
       return callMCPTool(
         { url: tool._mcpServerUrl, auth_header: tool._mcpAuthHeader },
         tool._mcpToolName,
@@ -496,7 +513,6 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
       ? marketCtx.value
       : { contextBlock: null, tickersFetched: [], newsArticles: [] }
 
-  // Collect MCP results that succeeded
   const mcpContextParts = mcpResults
     .filter(r => r.status === 'fulfilled' && r.value?.result)
     .map(r => {
@@ -509,22 +525,93 @@ export async function runTradingAgent({ userId, message, portfolio, llmConfig = 
     .filter(r => r.status === 'fulfilled' && r.value?.result && !r.value.result.startsWith('Error:'))
     .map(r => r.value.toolName)
 
-  // ── Step 5: assemble system prompt with all pre-fetched context ──
-  const liveSection        = contextBlock ? `\n\n${contextBlock}` : ''
-  const mcpSection         = mcpContextParts.length > 0
+  const mcpSection = mcpContextParts.length > 0
     ? `\n\n📡 EXTERNAL SEARCH RESULTS (use this information to answer the user):\n\n${mcpContextParts.join('\n\n')}`
     : ''
-  const userContextSection = buildUserContextBlock(userContext)
 
-  const systemPrompt = `You are a knowledgeable trading assistant for TradeBuddy.
+  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock, mcpSection, userContext })
+
+  // Single LLM call — no trade tools (research only)
+  const { text } = await callLLM(llmCfg, {
+    systemPrompt,
+    userMessage: message,
+    tools: undefined,
+  })
+
+  return {
+    response:    text ?? "I wasn't able to find relevant data for that query.",
+    trade:       null,
+    tickersFetched,
+    newsArticles,
+    mcpToolUsed: mcpToolsUsed[0] ?? null,
+  }
+}
+
+// ── Step 2C: Portfolio query ─────────────────────────────────────────────────
+// Pre-fetch prices + news for all held tickers, then single LLM call.
+
+async function runPortfolioQuery({ message, portfolioText, portfolioTickers, llmCfg, mcpServers, userContext }) {
+  const tickersToFetch = portfolioTickers.slice(0, 5)
+
+  const { contextBlock, tickersFetched, newsArticles } =
+    tickersToFetch.length > 0
+      ? await fetchLiveMarketContext(tickersToFetch, { generalNews: false })
+      : { contextBlock: null, tickersFetched: [], newsArticles: [] }
+
+  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock, mcpSection: '', userContext })
+
+  const { text } = await callLLM(llmCfg, {
+    systemPrompt,
+    userMessage: message,
+    tools: undefined,
+  })
+
+  return {
+    response: text ?? "Here's what I can see in your portfolio.",
+    trade: null,
+    tickersFetched,
+    newsArticles,
+    mcpToolUsed: null,
+  }
+}
+
+// ── Step 2D: General question ────────────────────────────────────────────────
+// No data fetch needed — single LLM call with portfolio context only.
+
+async function runGeneralQuestion({ message, portfolioText, llmCfg, userContext }) {
+  const systemPrompt = buildSystemPrompt({ portfolioText, contextBlock: null, mcpSection: '', userContext })
+
+  const { text } = await callLLM(llmCfg, {
+    systemPrompt,
+    userMessage: message,
+    tools: undefined,
+  })
+
+  return {
+    response: text ?? "I'm not sure about that. Try asking about a specific stock or your portfolio.",
+    trade: null,
+    tickersFetched: [],
+    newsArticles: [],
+    mcpToolUsed: null,
+  }
+}
+
+// ── System prompt builder ────────────────────────────────────────────────────
+
+function buildSystemPrompt({ portfolioText, contextBlock, mcpSection, userContext }) {
+  const liveSection        = contextBlock ? `\n\n${contextBlock}` : ''
+  const userContextSection = buildUserContextBlock(userContext)
+  const now = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' })
+
+  return `You are a knowledgeable trading assistant for TradeBuddy.
 Help the user with anything trading or markets related — market hours, news, analysis, general finance questions, and portfolio management.
 You can execute trades and answer general knowledge questions.
 
 IMPORTANT — live data rules:
 - If live prices or news appear in this prompt (marked 📈 or 📰), they are REAL data fetched right now from Polygon.io. Use them confidently. Never say you "cannot access" or "don't have" real-time data when it is shown below.
-- If no live data appears below AND the user asks about current prices/news, briefly acknowledge you don't have a live feed for that specific query and suggest they ask about a specific ticker (e.g. "What's the news on AAPL?") or connect a search MCP server.
+- If no live data appears below AND the user asks about current prices/news, briefly acknowledge you don't have a live feed for that specific query and suggest they ask about a specific ticker (e.g. "What's the news on AAPL?") or connect a search skill in Settings.
 - When MCP search results appear (marked 📡), use them to answer precisely.
-Today is ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' })} ET.
+Today is ${now} ET.
 
 Current portfolio:
 ${portfolioText}
@@ -535,68 +622,12 @@ Trade execution guidelines:
 - Use remove_holding when the user says "remove", "close", "exit", or "sell all" a position
 - "sell half" → calculate shares / 2 (round to 3 decimal places)
 - If live market data is shown above, use it as the price for buy/sell actions
-- If no price is given and no live data is available, make a reasonable estimate and note it
 - Always use UPPERCASE ticker symbols
 - For questions or analysis (no trade), respond conversationally with no tool call
 - Keep text responses to 1-2 sentences
 
 When the user asks how to do something in the app, answer using the guide below.
 ${USER_GUIDE ? `\n---\n${USER_GUIDE}` : ''}`
-
-  // ── Step 6: single LLM call with all context pre-loaded ──────────
-  const llmCfg = {
-    provider: llmConfig.provider || 'anthropic',
-    model:    llmConfig.model    || 'claude-haiku-4-5-20251001',
-    apiKey:   llmConfig.apiKey   || null,
-  }
-
-  // Only expose trade tools for explicit trade commands.
-  // For questions/analysis, passing no tools forces a text-only response,
-  // which prevents over-eager models (e.g. Gemini) from executing trades
-  // when the user just asked a question.
-  const turn1 = await callLLM(llmCfg, {
-    systemPrompt,
-    userMessage: message,
-    tools: isTradeCommand ? TOOLS : undefined,
-  })
-
-  const { text, toolName, toolInput } = turn1
-
-  if (!toolName) {
-    return {
-      response:    text ?? "I'm not sure how to help with that. Try \"buy 10 AAPL at 180\" or \"sell half my TSLA\".",
-      trade:       null,
-      tickersFetched,
-      newsArticles,
-      mcpToolUsed: mcpToolsUsed.length > 0 ? mcpToolsUsed[0] : null,
-    }
-  }
-
-  const confidence = toolInput?.confidence ?? 1
-
-  // ── Stage 2: server-side executability check ─────────────────────
-  // Runs regardless of confidence — catches problems the LLM can't know about.
-  const { livePrice, blocker } = await validateTrade(toolName, toolInput, userId)
-
-  if (blocker) {
-    // Trade is not executable — return a clear error, no confirmation card
-    return { response: blocker, trade: null, pendingTrade: null, tickersFetched, newsArticles }
-  }
-
-  // ── Stage 1: intent clarity check ───────────────────────────────
-  // Trade is executable but LLM wasn't confident — ask the user to confirm.
-  if (confidence < TRADE_CONFIDENCE_THRESHOLD) {
-    return {
-      response:     null,
-      pendingTrade: { toolName, ...toolInput, livePrice },
-      trade:        null,
-      tickersFetched,
-      newsArticles,
-    }
-  }
-
-  // Both stages pass — execute immediately with the pre-resolved live price.
-  return executeTrade({ toolName, toolInput, userId, livePrice, contextBlock, tickersFetched, newsArticles })
 }
 
 // ── Live price resolver ───────────────────────────────────────────

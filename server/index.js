@@ -2034,7 +2034,7 @@ app.put('/api/admin/teacher-verifications/:id/approve', adminOnly, async (req, r
     // Send approval email (fire and forget)
     const { rows: [user] } = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [verif.user_id])
     const appUrl = process.env.APP_URL || 'https://tradebuddy.app'
-    import('./email.js').then(({ sendTeacherApprovedEmail }) => {
+    import('./common/email.js').then(({ sendTeacherApprovedEmail }) => {
       sendTeacherApprovedEmail({ to: user.email, name: user.name, appUrl }).catch(() => {})
     })
 
@@ -2060,7 +2060,7 @@ app.put('/api/admin/teacher-verifications/:id/reject', adminOnly, async (req, re
     // Send rejection email (fire and forget)
     const { rows: [user] } = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [verif.user_id])
     const appUrl = process.env.APP_URL || 'https://tradebuddy.app'
-    import('./email.js').then(({ sendTeacherRejectedEmail }) => {
+    import('./common/email.js').then(({ sendTeacherRejectedEmail }) => {
       sendTeacherRejectedEmail({ to: user.email, name: user.name, reason, appUrl }).catch(() => {})
     })
 

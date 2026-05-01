@@ -46,6 +46,7 @@ const PAGES = {
   settings:        Settings,
 }
 
+
 // Read URL params once at module load (before any re-renders strip them)
 const urlParams   = new URLSearchParams(window.location.search)
 const RESET_TOKEN = urlParams.get('reset_token')
